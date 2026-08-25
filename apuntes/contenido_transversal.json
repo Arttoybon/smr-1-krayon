@@ -1,0 +1,77 @@
+{
+  "modulo_digitalizacion": {
+    "nombre": "Digitalización Aplicada al Sistema Productivo (1º SMR)",
+    "unidades_didacticas": [
+      {
+        "id": "DIG_UD01",
+        "titulo": "Inteligencia Artificial y Machine Learning",
+        "contenido_detallado": "La Inteligencia Artificial (IA) ha pasado de ser una disciplina teórica a convertirse en la columna vertebral de la Cuarta Revolución Industrial. Se define como la capacidad de un sistema para interpretar correctamente datos externos, aprender de ellos y emplear esos conocimientos para lograr tareas y metas específicas mediante una adaptación flexible. En el contexto de SMR, la IA no solo es una herramienta de usuario, sino un componente crítico en la gestión de infraestructuras y el desarrollo de software. El Aprendizaje Automático (Machine Learning) es un subcampo de la IA que permite a las computadoras aprender sin ser programadas explícitamente. Se divide en: 1. Aprendizaje Supervisado (uso de datos etiquetados para predicciones, como detección de intrusiones en redes). 2. Aprendizaje No Supervisado (encuentra patrones en datos no etiquetados, como segmentación de clientes). 3. Aprendizaje por Refuerzo (aprende mediante prueba y error para maximizar una recompensa, usado en robótica y optimización de rutas). Basado en Redes Neuronales Artificiales con múltiples capas, el Deep Learning imita el funcionamiento del cerebro humano. Es el motor detrás de los grandes modelos de lenguaje (LLMs) como GPT y sistemas de visión artificial avanzados. La IA Generativa transforma la labor del técnico SMR al automatizar la escritura de scripts de administración y la depuración de errores."
+      },
+      {
+        "id": "DIG_UD02",
+        "titulo": "Big Data: El Activo del Siglo XXI",
+        "contenido_detallado": "Big Data se refiere a conjuntos de datos tan voluminosos y complejos que el software de procesamiento de datos tradicional no es capaz de gestionarlos. Para el técnico de sistemas, implica un cambio de paradigma desde bases de datos relacionales (SQL) hacia sistemas distribuidos y NoSQL. Se define por las 5 V: Volumen (cantidades masivas), Velocidad (análisis en tiempo real), Variedad (estructurados y no estructurados), Veracidad (calidad y fiabilidad) y Valor (transformación en ventaja competitiva). El ecosistema incluye Hadoop para procesamiento distribuido con redundancia HDFS, Spark para análisis en memoria ultrarrápido y bases de datos NoSQL como MongoDB y Cassandra para escalabilidad horizontal."
+      },
+      {
+        "id": "DIG_UD03",
+        "titulo": "Ciberseguridad Corporativa Avanzada",
+        "contenido_detallado": "El panorama de amenazas ha evolucionado hacia ataques persistentes avanzados (APT). El Ransomware (secuestro de datos) es la mayor preocupación para las PYMES. La infraestructura defensiva requiere Firewalls de nueva generación (NGFW) que analizan el tráfico a nivel de aplicación (Capa 7). La arquitectura Zero Trust (Nunca confiar, siempre verificar) sustituye el concepto de perímetro tradicional. Sistemas como el SIEM centralizan los logs de toda la red para detectar incidentes correlacionando eventos. La gestión se basa en estándares como ISO 27001 y planes de contingencia con métricas RTO y RPO garantizadas mediante backups 3-2-1."
+      },
+      {
+        "id": "DIG_UD04",
+        "titulo": "Cloud Computing y Virtualización",
+        "contenido_detallado": "Modelos de servicio: IaaS (infraestructura como servidores virtuales), PaaS (plataformas para desarrolladores) y SaaS (software listo para usar como Microsoft 365). Modelos de despliegue: Nube pública (AWS, Azure), privada (dedicada) e híbrida. Tecnologías habilitadoras: Docker para empaquetado de aplicaciones con dependencias y Kubernetes para orquestación y alta disponibilidad. La computación Serverless (FaaS) permite ejecutar código sin gestionar el servidor subyacente, pagando solo por el tiempo de ejecución."
+      },
+      {
+        "id": "DIG_UD05",
+        "titulo": "Ética Digital y Normativa",
+        "contenido_detallado": "El RGPD impone obligaciones estrictas sobre la recogida y tratamiento de datos personales, incluyendo el Derecho al olvido y la Privacidad por diseño. La ética digital aborda el sesgo algorítmico y la necesidad de supervisión humana (Human-in-the-loop). La soberanía de datos busca el control sobre la ubicación física y leyes aplicables (Gaia-X). La automatización plantea retos laborales, donde la alfabetización digital y el aprendizaje continuo son fundamentales."
+      }
+    ]
+  },
+  "modulo_sostenibilidad": {
+    "nombre": "Sostenibilidad Aplicada al Sistema Productivo (1º SMR)",
+    "unidades_didacticas": [
+      {
+        "id": "SOS_UD01",
+        "titulo": "Desafíos Globales y ODS",
+        "contenido_detallado": "El sector IT es responsable de aproximadamente el 2-3% de las emisiones globales. La Agenda 2030 marca objetivos críticos: ODS 7 (energía limpia en Data Centers), ODS 9 (infraestructuras resilientes), ODS 12 (consumo responsable y reducción de residuos electrónicos) y ODS 13 (descarbonización tecnológica)."
+      },
+      {
+        "id": "SOS_UD02",
+        "titulo": "Economía Circular y Gestión de Residuos",
+        "contenido_detallado": "La economía circular propone cerrar el ciclo de vida: Ecodiseño para reparar, Servitización y Logística inversa. La gestión de RAEE está regulada por el RD 110/2015, exigiendo el tratamiento de materiales peligrosos (plomo, mercurio) y la recuperación de metales valiosos (oro, cobalto) mediante minería urbana."
+      },
+      {
+        "id": "SOS_UD03",
+        "titulo": "Eficiencia Energética y Green IT",
+        "contenido_detallado": "Estrategias: Virtualización para consolidar servidores, hardware eficiente (80 Plus, SSD), y optimización térmica (pasillos fríos/calientes). Métricas clave: PUE (eficiencia energética total), CUE (intensidad de carbono) y WUE (eficiencia en uso de agua)."
+      }
+    ]
+  },
+  "modulo_ipe_1": {
+    "nombre": "Itinerario Personal para la Empleabilidad I (1º SMR)",
+    "unidades_didacticas": [
+      {
+        "id": "IPE_UD01",
+        "titulo": "El Mercado Laboral en el Sector IT",
+        "contenido_detallado": "Perfiles típicos: Técnico Helpdesk (soporte), Administrador de Sistemas (servidores, virtualización), Técnico de Redes (Cisco, seguridad perimetral) e Instalador de Telecomunicaciones. Competencias: Certificaciones (CCNA, LPI), inglés técnico, resiliencia y adaptabilidad al cambio tecnológico."
+      },
+      {
+        "id": "IPE_UD02",
+        "titulo": "Búsqueda de Empleo y Marca Personal",
+        "contenido_detallado": "LinkedIn como herramienta estratégica: perfil estelar, networking y optimización para reclutadores. CV enfocado en resultados y enlaces a portfolios o GitHub. Preparación de entrevistas técnicas, demostrando lógica y honestidad ante retos desconocidos."
+      },
+      {
+        "id": "IPE_UD03",
+        "titulo": "Derecho Laboral: Contratos y Nóminas",
+        "contenido_detallado": "Tipos de contrato: Indefinido, Temporal y Formación. La nómina incluye devengos (salario base, complementos) y deducciones (Seguridad Social ~6.35%, IRPF). Conceptos: SMI, Salario Bruto vs Neto. El Convenio Colectivo marca los mínimos del sector."
+      },
+      {
+        "id": "IPE_UD04",
+        "titulo": "Prevención de Riesgos Laborales (PRL) en IT",
+        "contenido_detallado": "Ergonomía: posturas, sillas adecuadas, altura del monitor. Fatiga visual: regla 20-20-20. Riesgo eléctrico en montaje: pulseras antiestáticas, herramientas aisladas. Riesgos psicosociales: estrés y burnout. Actuación en emergencias en CPD (extintores de CO2/agentes limpios)."
+      }
+    ]
+  }
+}
