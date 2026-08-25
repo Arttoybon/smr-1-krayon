@@ -1,1 +1,15 @@
 PROMPT_MAESTRO.md
+
+# Entorno y secretos locales
+.venv/
+.env
+
+# Archivos generados por Python y Streamlit
+__pycache__/
+*.py[cod]
+.streamlit/secrets.toml
+
+# Índices y bases vectoriales locales
+storage/
+chroma_db/
+qdrant_storage/
