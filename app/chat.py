@@ -1,11 +1,30 @@
 import os
 import sys
-from pathlib import Path
-
+import time
+import logging
+import zipfile
+import io
 import chromadb
+import pymupdf
 import streamlit as st
+
+# Desactivar avisos de deprecación de Streamlit y otros logs
+os.environ["STREAMLIT_BROWSER_GATHER_USAGE_STATS"] = "false"
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+logging.getLogger("transformers").setLevel(logging.ERROR)
+logging.getLogger("absl").setLevel(logging.ERROR)
+
+from pathlib import Path
 from dotenv import load_dotenv
+
+# Silenciar logs ruidosos de bibliotecas externas
+logging.getLogger("transformers").setLevel(logging.ERROR)
+logging.getLogger("absl").setLevel(logging.ERROR)
+os.environ["TRANSFORMERS_VERBOSITY"] = "error"
+os.environ["GOOGLE_LOGLEVEL"] = "3"
+
 from llama_index.core import Settings, StorageContext, VectorStoreIndex
+from llama_index.core.vector_stores import MetadataFilters, ExactMatchFilter
 from llama_index.llms.google_genai import GoogleGenAI
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.vector_stores.chroma import ChromaVectorStore
@@ -71,8 +90,8 @@ def run_indexing(mode="lite"):
     except Exception as e:
         st.error(f"❌ Error durante la indexación: {str(e)}")
 
-def render_source(source_path, metadata):
-    """Renderiza una fuente consultada, incluyendo imágenes si existen."""
+def render_source(source_path, metadata, expanded=False):
+    """Renderiza una fuente consultada, incluyendo imágenes y páginas de PDF."""
     full_path = PROJECT_ROOT / source_path
 
     # Mostrar el nombre del archivo y página si aplica
@@ -80,17 +99,44 @@ def render_source(source_path, metadata):
     if "page" in metadata:
         source_label += f" (Pág. {metadata['page']})"
 
-    with st.expander(source_label):
+    with st.expander(source_label, expanded=expanded):
         # Si es una imagen standalone
         if full_path.suffix.lower() in [".jpg", ".jpeg", ".png"]:
             try:
-                st.image(str(full_path), use_container_width=True)
+                st.image(str(full_path), width="stretch")
             except Exception:
                 st.write("No se pudo cargar la imagen.")
 
-        # Si es un PDF y tenemos visión (metadata indica que es pdf_page_with_vision)
-        elif metadata.get("content_type") == "pdf_page_with_vision":
-            st.info("💡 Esta página fue analizada con visión artificial.")
+        # Si es un PDF, renderizamos la página específica
+        elif full_path.suffix.lower() == ".pdf" and "page" in metadata:
+            try:
+                # Usamos PyMuPDF para renderizar la página como imagen
+                page_num = int(metadata["page"]) - 1  # 0-indexed
+                with pymupdf.open(full_path) as doc:
+                    page = doc.load_page(page_num)
+                    pix = page.get_pixmap(matrix=pymupdf.Matrix(2.0, 2.0))
+                    img_bytes = pix.tobytes("png")
+                    st.image(img_bytes, caption=f"Previsualización de la página {metadata['page']}", width="stretch")
+            except Exception as e:
+                st.write(f"No se pudo previsualizar la página del PDF: {e}")
+
+        # Si es un DOCX, intentamos extraer imágenes internas
+        elif full_path.suffix.lower() == ".docx":
+            try:
+                st.info("📦 Extrayendo imágenes del documento Word...")
+                with zipfile.ZipFile(full_path) as z:
+                    # Las imágenes en DOCX suelen estar en word/media/
+                    media_files = [f for f in z.namelist() if f.startswith('word/media/')]
+                    if media_files:
+                        cols = st.columns(min(len(media_files), 2))
+                        for idx, img_path in enumerate(media_files):
+                            with z.open(img_path) as f:
+                                img_data = f.read()
+                                cols[idx % 2].image(img_data, caption=f"Imagen {idx+1} de {source_path}", width="stretch")
+                    else:
+                        st.write("No se encontraron imágenes dentro de este documento Word.")
+            except Exception as e:
+                st.write(f"No se pudieron extraer imágenes del Word: {e}")
 
         st.caption(f"Tipo: {metadata.get('content_type', 'Desconocido')}")
 
@@ -209,11 +255,11 @@ def main():
     for message in st.session_state.messages:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
-            if "sources" in message:
-                st.markdown("---")
-                st.markdown("**Fuentes consultadas:**")
-                for src in message["sources"]:
-                    render_source(src["source"], src["metadata"])
+            if "sources" in message and message["sources"]:
+                with st.expander("📚 Ver fuentes y fragmentos encontrados"):
+                    for src in message["sources"]:
+                        is_visual = any(ext in src["source"].lower() for ext in [".png", ".jpg", ".jpeg", ".pdf", ".docx"])
+                        render_source(src["source"], src["metadata"], expanded=is_visual)
 
     # Input del usuario
     user_query = st.chat_input("Escribe tu duda sobre SMR...")
@@ -233,9 +279,39 @@ def main():
         with st.chat_message("assistant"):
             with st.spinner("Consultando base de conocimientos..."):
                 try:
+                    # Lógica para detectar menciones @archivo
+                    filters = None
+                    apuntes_dir = PROJECT_ROOT / "apuntes"
+                    if apuntes_dir.exists():
+                        available_files = [f.name for f in apuntes_dir.glob("*") if f.is_file()]
+                        for filename in available_files:
+                            if f"@{filename}" in user_query:
+                                st.info(f"🔍 Filtrando búsqueda solo en: `{filename}`")
+                                filters = MetadataFilters(filters=[
+                                    ExactMatchFilter(key="source", value=f"apuntes/{filename}")
+                                ])
+                                break
+
+                    from llama_index.core import PromptTemplate
+
+                    qa_prompt_str = (
+                        "Contexto de los apuntes:\n"
+                        "---------------------\n"
+                        "{context_str}\n"
+                        "---------------------\n"
+                        "Dada la información anterior, responde a la pregunta: {query_str}\n\n"
+                        "INSTRUCCIÓN PARA EL ASISTENTE SMR KRAYON:\n"
+                        "Si el usuario pide ver imágenes o diagramas, confirma que has encontrado el documento "
+                        "y dile que puede ver las previsualizaciones visuales justo debajo de tu respuesta. "
+                        "El sistema las mostrará automáticamente. NUNCA digas que no tienes imágenes si hay contexto disponible."
+                    )
+                    qa_prompt = PromptTemplate(qa_prompt_str)
+
                     query_engine = index.as_query_engine(
-                        similarity_top_k=5,
+                        similarity_top_k=10,
                         response_mode="compact",
+                        filters=filters,
+                        text_qa_template=qa_prompt
                     )
 
                     try:
@@ -243,11 +319,13 @@ def main():
                         answer = str(response)
                         sources_nodes = getattr(response, "source_nodes", [])
                     except Exception as ai_err:
-                        if "insufficient_quota" in str(ai_err).lower() or "429" in str(ai_err):
-                            st.warning("⚠️ Límite de cuota alcanzado o error de saldo. Mostrando fragmentos encontrados.")
-                            retriever = index.as_retriever(similarity_top_k=5)
+                        err_str = str(ai_err).lower()
+                        if any(x in err_str for x in ["insufficient_quota", "429", "503", "unavailable", "overloaded"]):
+                            st.warning("⚠️ Los servidores de Google están saturados o sin cuota. Mostrando fragmentos encontrados directamente.")
+                            # Intentar solo recuperación si falla la generación
+                            retriever = index.as_retriever(similarity_top_k=5, filters=filters)
                             sources_nodes = retriever.retrieve(user_query)
-                            answer = "He encontrado información en tus apuntes, pero la IA no puede generar un resumen por falta de cuota/saldo."
+                            answer = "He encontrado información relevante en tus apuntes, pero la IA de Google no puede redactar un resumen en este momento (Servidor saturado o sin cuota). Revisa las fuentes abajo para ver los diagramas y textos."
                         else:
                             raise ai_err
 
@@ -267,10 +345,10 @@ def main():
                     st.markdown(answer)
 
                     if sources:
-                        st.markdown("---")
-                        st.markdown("**Fuentes y fragmentos encontrados:**")
-                        for src in sources:
-                            render_source(src["source"], src["metadata"])
+                        with st.expander("📚 Ver fuentes y fragmentos encontrados"):
+                            for src in sources:
+                                is_visual = any(ext in src["source"].lower() for ext in [".png", ".jpg", ".jpeg", ".pdf", ".docx"])
+                                render_source(src["source"], src["metadata"], expanded=is_visual)
 
                     st.session_state.messages.append({
                         "role": "assistant",

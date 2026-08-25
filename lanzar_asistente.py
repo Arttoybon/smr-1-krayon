@@ -48,8 +48,13 @@ def main():
     except KeyboardInterrupt:
         pass
     except Exception as e:
-        print(f"\n❌ Error: {e}")
-        input("Presiona Enter para salir...")
+        # En modo no-console (PyInstaller), imprimir o input() puede fallar
+        try:
+            print(f"\n❌ Error: {e}")
+            if sys.stdin and sys.stdin.readable():
+                input("Presiona Enter para salir...")
+        except:
+            pass
 
 if __name__ == "__main__":
     main()
