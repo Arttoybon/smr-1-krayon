@@ -13,3 +13,7 @@ __pycache__/
 storage/
 chroma_db/
 qdrant_storage/
+
+# Configuración y avatar local del usuario
+app/user_avatar.png
+app/user_config.json

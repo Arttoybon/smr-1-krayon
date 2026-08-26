@@ -24,21 +24,10 @@ VECTOR_DB_DIR = PROJECT_ROOT / "chroma_db"
 
 
 def load_documents(progress_callback=None) -> list[Document]:
-    """Carga Markdown, PDFs y DOCX extrayendo solo texto (sin análisis visual)."""
+    """Carga solo PDFs y DOCX extrayendo texto."""
     documents = []
 
-    # 1. Cargar Markdown
-    md_files = sorted(DOCUMENTS_DIR.rglob("*.md"))
-    if md_files:
-        if progress_callback:
-            progress_callback(f"Cargando {len(md_files)} archivos Markdown...")
-        documents.extend(SimpleDirectoryReader(
-            input_dir=str(DOCUMENTS_DIR),
-            recursive=True,
-            required_exts=[".md"],
-        ).load_data())
-
-    # 2. Cargar PDFs (solo texto)
+    # 1. Cargar PDFs (solo texto)
     pdf_paths = sorted(DOCUMENTS_DIR.rglob("*.pdf"))
     if pdf_paths:
         for i, pdf_path in enumerate(pdf_paths, 1):

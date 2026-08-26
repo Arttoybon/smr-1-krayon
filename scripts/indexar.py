@@ -77,18 +77,7 @@ def load_documents(progress_callback=None) -> list[Document]:
 
     mm_model = GeminiMultiModal(model_name="models/gemini-flash-latest", api_key=google_key)
 
-    # 1. Cargar Markdown
-    md_files = sorted(DOCUMENTS_DIR.rglob("*.md"))
-    if md_files:
-        if progress_callback:
-            progress_callback(f"Cargando {len(md_files)} archivos Markdown...")
-        documents.extend(SimpleDirectoryReader(
-            input_dir=str(DOCUMENTS_DIR),
-            recursive=True,
-            required_exts=[".md"],
-        ).load_data())
-
-    # 2. Cargar PDFs con Visión (Gemini Flash)
+    # 1. Cargar PDFs con Visión (Gemini Flash)
     pdf_paths = sorted(DOCUMENTS_DIR.rglob("*.pdf"))
     if pdf_paths:
         for i, pdf_path in enumerate(pdf_paths, 1):

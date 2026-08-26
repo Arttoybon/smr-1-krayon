@@ -4,365 +4,433 @@ import time
 import logging
 import zipfile
 import io
+import json
 import chromadb
 import pymupdf
 import streamlit as st
+from pathlib import Path
+from dotenv import load_dotenv
+from docx import Document as DocxDocument
 
-# Desactivar avisos de deprecación de Streamlit y otros logs
+# --- RUTAS DE CONFIGURACIÓN ---
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+CONFIG_FILE = PROJECT_ROOT / "app" / "user_config.json"
+USER_AVATAR_PATH = PROJECT_ROOT / "app" / "user_avatar.png"
+
+def save_user_profile(profile):
+    """Guarda el perfil del usuario en un archivo JSON local."""
+    data = {
+        "name": profile["name"],
+        "auto_view": profile["auto_view"],
+        "avatar_type": "emoji" if isinstance(profile["avatar"], str) else "custom"
+    }
+    if data["avatar_type"] == "emoji":
+        data["avatar_value"] = profile["avatar"]
+
+    with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=4)
+
+def load_user_profile():
+    """Carga el perfil del usuario desde el archivo local."""
+    default_profile = {"name": "Estudiante SMR", "avatar": "👤", "auto_view": True}
+
+    if not CONFIG_FILE.exists():
+        return default_profile
+
+    try:
+        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        profile = {
+            "name": data.get("name", "Estudiante SMR"),
+            "auto_view": data.get("auto_view", True)
+        }
+
+        if data.get("avatar_type") == "custom" and USER_AVATAR_PATH.exists():
+            profile["avatar"] = USER_AVATAR_PATH.read_bytes()
+        else:
+            profile["avatar"] = data.get("avatar_value", "👤")
+
+        return profile
+    except Exception:
+        return default_profile
+
+# --- CONFIGURACIÓN DE SILENCIO ---
 os.environ["STREAMLIT_BROWSER_GATHER_USAGE_STATS"] = "false"
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 logging.getLogger("transformers").setLevel(logging.ERROR)
-logging.getLogger("absl").setLevel(logging.ERROR)
+logging.getLogger("streamlit").setLevel(logging.ERROR)
 
-from pathlib import Path
-from dotenv import load_dotenv
-
-# Silenciar logs ruidosos de bibliotecas externas
-logging.getLogger("transformers").setLevel(logging.ERROR)
-logging.getLogger("absl").setLevel(logging.ERROR)
-os.environ["TRANSFORMERS_VERBOSITY"] = "error"
-os.environ["GOOGLE_LOGLEVEL"] = "3"
-
-from llama_index.core import Settings, StorageContext, VectorStoreIndex
+from llama_index.core import Settings, StorageContext, VectorStoreIndex, PromptTemplate
 from llama_index.core.vector_stores import MetadataFilters, ExactMatchFilter
 from llama_index.llms.google_genai import GoogleGenAI
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.vector_stores.chroma import ChromaVectorStore
 from PIL import Image
 
-# Añadir el directorio raíz al path para importar los scripts
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-sys.path.append(str(PROJECT_ROOT))
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.append(str(PROJECT_ROOT))
 
 from scripts import indexar_lite, indexar
 
 def load_index() -> VectorStoreIndex:
-    """Carga el índice desde la base de datos vectorial configurado para Gemini."""
     load_dotenv(PROJECT_ROOT / ".env")
-
-    # 1. Configurar LLM (Google Gemini - GRATIS)
     google_key = os.getenv("GOOGLE_API_KEY")
     if google_key:
-        # Usamos el nuevo SDK oficial de Google GenAI con un modelo garantizado (flash-latest)
         Settings.llm = GoogleGenAI(model="models/gemini-flash-latest", api_key=google_key)
     else:
-        st.error("❌ No se encontró GOOGLE_API_KEY en el archivo .env")
+        st.error("❌ Falta API Key")
         st.stop()
-
-    # 2. Configurar Embeddings locales (Siempre GRATIS)
-    try:
-        Settings.embed_model = HuggingFaceEmbedding(
-            model_name="sentence-transformers/all-MiniLM-L6-v2"
-        )
-    except Exception as e:
-        st.warning(f"⚠️ Error cargando embeddings locales: {e}. Usando configuración por defecto.")
-
+    Settings.embed_model = HuggingFaceEmbedding(model_name="sentence-transformers/all-MiniLM-L6-v2")
     vector_db_dir = PROJECT_ROOT / "chroma_db"
-    if not vector_db_dir.exists():
-        st.warning("⚠️ Base de datos no encontrada. Por favor, indexa tus apuntes en la barra lateral.")
-        return None
-
+    if not vector_db_dir.exists(): return None
     chroma_client = chromadb.PersistentClient(path=str(vector_db_dir))
-    collection = chroma_client.get_or_create_collection(
-        name=os.getenv("CHROMA_COLLECTION", "apuntes")
-    )
+    collection = chroma_client.get_or_create_collection(name=os.getenv("CHROMA_COLLECTION", "apuntes"))
     vector_store = ChromaVectorStore(chroma_collection=collection)
-
     return VectorStoreIndex.from_vector_store(vector_store=vector_store)
 
 def run_indexing(mode="lite"):
-    """Ejecuta el proceso de indexación y muestra el progreso."""
     status_text = st.empty()
-    progress_bar = st.progress(0)
-
-    def update_progress(msg):
-        status_text.text(msg)
-
     try:
-        if mode == "vision":
-            indexar.build_index(progress_callback=update_progress)
-        else:
-            indexar_lite.build_index(progress_callback=update_progress)
-
-        st.success("✅ Indexación completada con éxito.")
+        if mode == "vision": indexar.build_index(progress_callback=status_text.text)
+        else: indexar_lite.build_index(progress_callback=status_text.text)
+        st.success("✅ Completado")
         st.session_state.index = load_index()
         st.rerun()
-    except Exception as e:
-        st.error(f"❌ Error durante la indexación: {str(e)}")
+    except Exception as e: st.error(f"Error: {e}")
 
-def render_source(source_path, metadata, expanded=False):
-    """Renderiza una fuente consultada, incluyendo imágenes y páginas de PDF."""
+def render_doc_viewer(source_path, metadata):
+    """Renderiza el documento en el panel central."""
     full_path = PROJECT_ROOT / source_path
+    st.markdown(f"#### 📄 `{source_path.split('/')[-1]}`")
 
-    # Mostrar el nombre del archivo y página si aplica
-    source_label = f"📄 {source_path}"
-    if "page" in metadata:
-        source_label += f" (Pág. {metadata['page']})"
-
-    with st.expander(source_label, expanded=expanded):
-        # Si es una imagen standalone
-        if full_path.suffix.lower() in [".jpg", ".jpeg", ".png"]:
-            try:
-                st.image(str(full_path), width="stretch")
-            except Exception:
-                st.write("No se pudo cargar la imagen.")
-
-        # Si es un PDF, renderizamos la página específica
-        elif full_path.suffix.lower() == ".pdf" and "page" in metadata:
-            try:
-                # Usamos PyMuPDF para renderizar la página como imagen
-                page_num = int(metadata["page"]) - 1  # 0-indexed
-                with pymupdf.open(full_path) as doc:
-                    page = doc.load_page(page_num)
-                    pix = page.get_pixmap(matrix=pymupdf.Matrix(2.0, 2.0))
-                    img_bytes = pix.tobytes("png")
-                    st.image(img_bytes, caption=f"Previsualización de la página {metadata['page']}", width="stretch")
-            except Exception as e:
-                st.write(f"No se pudo previsualizar la página del PDF: {e}")
-
-        # Si es un DOCX, intentamos extraer imágenes internas
-        elif full_path.suffix.lower() == ".docx":
-            try:
-                st.info("📦 Extrayendo imágenes del documento Word...")
-                with zipfile.ZipFile(full_path) as z:
-                    # Las imágenes en DOCX suelen estar en word/media/
-                    media_files = [f for f in z.namelist() if f.startswith('word/media/')]
-                    if media_files:
-                        cols = st.columns(min(len(media_files), 2))
-                        for idx, img_path in enumerate(media_files):
-                            with z.open(img_path) as f:
-                                img_data = f.read()
-                                cols[idx % 2].image(img_data, caption=f"Imagen {idx+1} de {source_path}", width="stretch")
-                    else:
-                        st.write("No se encontraron imágenes dentro de este documento Word.")
-            except Exception as e:
-                st.write(f"No se pudieron extraer imágenes del Word: {e}")
-
-        st.caption(f"Tipo: {metadata.get('content_type', 'Desconocido')}")
+    if full_path.suffix.lower() in [".jpg", ".jpeg", ".png"]:
+        st.image(str(full_path), use_container_width=True)
+    elif full_path.suffix.lower() == ".pdf":
+        try:
+            page_num = int(metadata.get("page", 1)) - 1
+            with pymupdf.open(full_path) as doc:
+                page = doc.load_page(page_num)
+                pix = page.get_pixmap(matrix=pymupdf.Matrix(2.0, 2.0))
+                st.image(pix.tobytes("png"), use_container_width=True)
+        except Exception: st.write("No se pudo previsualizar.")
+    elif full_path.suffix.lower() == ".docx":
+        try:
+            doc = DocxDocument(full_path)
+            txt = [p.text for p in doc.paragraphs if p.text.strip()]
+            if txt:
+                with st.container(height=300): st.markdown("\n\n".join(txt))
+            with zipfile.ZipFile(full_path) as z:
+                media = [f for f in z.namelist() if f.startswith('word/media/')]
+                for img in media: st.image(z.open(img).read(), use_container_width=True)
+        except Exception: st.write("Error cargando Word")
 
 def main():
     st.set_page_config(
-        page_title="SMR Krayon | Editor de Conocimiento",
+        page_title="SMR Krayon Pro",
         page_icon="🤖",
         layout="wide",
+        initial_sidebar_state="expanded"
     )
 
-    # Estilo VS Code personalizado
+    # --- ESTILOS VS CODE PRO (NIVELACIÓN Y DISEÑO) ---
     st.markdown("""
         <style>
-        /* Fondo principal */
-        .stApp {
-            background-color: #1E1E1E;
+        /* Variables Pro */
+        :root { --bg-main: #1E1E1E; --bg-side: #252526; --accent: #007ACC; --border: #333333; }
+
+        /* Ocultar footer y menú, pero dejar el header visible y resaltar el botón lateral */
+        footer, #MainMenu {visibility: hidden;}
+        header[data-testid="stHeader"] {
+            background: transparent !important;
+            z-index: 1001 !important;
         }
 
-        /* Sidebar como Activity Bar + Explorer */
-        section[data-testid="stSidebar"] {
-            background-color: #252526 !important;
-            border-right: 1px solid #333333;
-        }
-
-        /* Títulos y texto */
-        h1, h2, h3, p, span, label {
-            color: #CCCCCC !important;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-        }
-
-        /* Bloques de código/fuentes */
-        .stExpander {
-            background-color: #2D2D2D !important;
-            border: 1px solid #3E3E3E !important;
-            border-radius: 4px;
-        }
-
-        /* Mensajes del chat */
-        [data-testid="stChatMessage"] {
-            background-color: #2D2D2D;
-            border-radius: 4px;
-            margin-bottom: 10px;
-            border-left: 3px solid #007ACC;
-        }
-
-        /* Input del chat estilo terminal */
-        .stChatInputContainer {
-            background-color: #1E1E1E !important;
-            padding-bottom: 20px;
-        }
-
-        /* Botones estilo VS Code */
-        .stButton button {
-            background-color: #0E639C !important;
+        /* Hacer el botón de abrir/cerrar sidebar MUY visible */
+        [data-testid="stSidebarCollapseButton"] {
+            background-color: var(--accent) !important;
             color: white !important;
-            border-radius: 2px !important;
-            border: none !important;
-            padding: 0.2rem 1rem !important;
+            border-radius: 5px !important;
+            padding: 5px !important;
+            margin-top: 5px !important;
+            box-shadow: 0 0 15px rgba(0,122,204,0.6) !important;
         }
-        .stButton button:hover {
-            background-color: #1177BB !important;
+
+        .stApp { background-color: var(--bg-main); color: #cccccc; font-family: 'Segoe UI', sans-serif; }
+
+        [data-testid="stAppViewContainer"] { height: 100vh; overflow: hidden; }
+        .main .block-container {
+            padding: 0 !important;
+            max-width: 100% !important;
+            height: 100vh !important;
+            margin-top: 35px !important;
         }
+
+        [data-testid="stHorizontalBlock"] { gap: 0 !important; }
+
+        /* Visor (Panel 1) */
+        [data-testid="stHorizontalBlock"] > [data-testid="column"]:nth-child(1) {
+            height: calc(100vh - 57px);
+            overflow-y: auto;
+            padding: 20px 30px !important;
+            border-right: 1px solid var(--border);
+        }
+
+        /* Chat (Panel 2) */
+        [data-testid="stHorizontalBlock"] > [data-testid="column"]:nth-child(2) {
+            height: calc(100vh - 57px);
+            padding: 0 !important;
+            background-color: #1a1a1a;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Nivelar Widgets */
+        h4, .stMultiSelect { margin-top: 0 !important; padding-top: 0 !important; }
+
+        /* Contenedor fijo para el input y menciones en la parte inferior */
+        .bottom-command-bar {
+            position: fixed;
+            bottom: 30px;
+            right: 20px;
+            width: 30%;
+            z-index: 1001;
+            background-color: #1a1a1a;
+            border: 1px solid #333;
+            border-radius: 4px;
+            padding: 10px;
+            box-shadow: 0 -5px 15px rgba(0,0,0,0.3);
+        }
+
+        /* Ajustar el tamaño de los avatares en el chat - MÁS GRANDES */
+        [data-testid="stChatMessageAvatar"] {
+            width: 65px !important;
+            height: 65px !important;
+            border-radius: 12px !important;
+        }
+        [data-testid="stChatMessageAvatar"] img, [data-testid="stChatMessageAvatar"] div {
+            width: 65px !important;
+            height: 65px !important;
+            object-fit: cover !important;
+            font-size: 35px !important; /* Para cuando es un emoji */
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+        }
+
+        .stChatInputContainer { width: 100% !important; position: static !important; padding: 0 !important; }
+
+        .editor-header { position: fixed; top: 0; left: 0; right: 0; height: 35px; background: var(--bg-side); z-index: 1000; display: flex; align-items: center; padding-left: 60px; border-bottom: 1px solid var(--border); }
+        .status-bar { position: fixed; bottom: 0; left: 0; right: 0; height: 22px; background: var(--accent); z-index: 1000; color: white; font-size: 11px; display: flex; align-items: center; padding: 0 10px; }
         </style>
+        <div class="editor-header"><div style="background:#1E1E1E; padding:0 20px; height:100%; display:flex; align-items:center; border-top:1px solid #007ACC; color:white; font-size:12px;">🤖 krayon_workspace</div></div>
+        <div class="status-bar"><span>● Connected</span><span style="margin-left:auto;">Gemini 1.5 Flash | v2.12 Pro</span></div>
     """, unsafe_allow_html=True)
 
-    # Header estilo pestaña de editor
-    st.markdown("### `index.smr` • SMR Krayon Assistant")
+    if "selected_doc" not in st.session_state: st.session_state.selected_doc = None
+    if "messages" not in st.session_state: st.session_state.messages = []
+    if "active_mentions" not in st.session_state: st.session_state.active_mentions = []
+    if "active_tab" not in st.session_state: st.session_state.active_tab = "explorer"
 
-    # Inicializar índice con indicador de carga
-    if "index" not in st.session_state:
-        with st.status("🚀 Iniciando motores de IA...", expanded=True) as status:
-            st.write("Cargando base de datos vectorial...")
-            st.session_state.index = load_index()
-            st.write("Configurando modelos de lenguaje...")
-            status.update(label="✅ Sistema Listo", state="complete", expanded=False)
+    # Perfil del usuario persistente
+    if "user_profile" not in st.session_state:
+        st.session_state.user_profile = load_user_profile()
 
-    index = st.session_state.index
+    # --- PREPARACIÓN DE DATOS (Común para sidebar y chat) ---
+    apuntes_dir = PROJECT_ROOT / "apuntes"
+    all_files = []
+    if apuntes_dir.exists():
+        all_files = sorted([f for f in os.listdir(apuntes_dir) if not f.startswith(".")])
 
-    # Sidebar
+    # --- PREPARACIÓN DE AVATARES ---
+    ai_avatar_path = PROJECT_ROOT / "app" / "ai_avatar.png"
+    # Si la imagen existe, la cargamos como objeto Image de PIL para asegurar que Streamlit la renderice
+    if ai_avatar_path.exists():
+        try:
+            AI_AVATAR = Image.open(ai_avatar_path)
+        except Exception:
+            AI_AVATAR = "🤖"
+    else:
+        AI_AVATAR = "🤖"
+
+    # --- SIDEBAR ---
     with st.sidebar:
-        st.header("📂 Gestión de Conocimiento")
+        st.markdown("<br>", unsafe_allow_html=True)
+        col_i, col_c = st.columns([1, 4])
+        with col_i:
+            if st.button("📄", key="b1", help="Explorador"): st.session_state.active_tab = "explorer"
+            if st.button("⚙️", key="b2", help="Sistema"): st.session_state.active_tab = "system"
+            if st.button("👤", key="b3", help="Mi Perfil"): st.session_state.active_tab = "profile"
+            st.markdown("<br><br>", unsafe_allow_html=True)
+            if st.button("🔴", key="b_exit", help="Cerrar Aplicación"):
+                st.toast("Deteniendo servicios... Adiós 👋")
+                time.sleep(1)
+                os._exit(0)
+        with col_c:
+            if st.session_state.active_tab == "explorer":
+                st.markdown("📂 **EXPLORADOR**")
+                if all_files:
+                    for f in all_files:
+                        if st.button(f" {f}", key=f"f_{f}", use_container_width=True):
+                            st.session_state.selected_doc = {"source": f"apuntes/{f}", "metadata": {}}
+                            st.session_state.active_mentions = [f"@{f}"]
+                else:
+                    st.caption("Carpeta vacía")
 
-        # Listar archivos en @apuntes
-        apuntes_dir = PROJECT_ROOT / "apuntes"
-        if apuntes_dir.exists():
-            files = [f.name for f in apuntes_dir.glob("*") if f.is_file() and not f.name.startswith(".")]
-            if files:
-                st.write(f"**Archivos detectados ({len(files)}):**")
-                for f in files:
-                    st.text(f"  • {f}")
+            elif st.session_state.active_tab == "profile":
+                st.markdown("👤 **MI PERFIL**")
+
+                # File uploader para avatar local
+                uploaded_avatar = st.file_uploader("Subir foto de perfil", type=["png", "jpg", "jpeg"], help="Sube una imagen desde tu PC para usarla como avatar.")
+
+                with st.form("profile_form"):
+                    new_name = st.text_input("Nombre de usuario", value=st.session_state.user_profile["name"])
+
+                    # Si ha subido una imagen, mostramos aviso de que se usará esa
+                    avatar_options = ["Emoji predeterminado", "👤", "👨‍💻", "👩‍💻", "🤖", "🎓", "🌟"]
+                    selected_emoji = st.selectbox("O elegir Emoji", avatar_options, index=1)
+
+                    if st.form_submit_button("Guardar cambios", use_container_width=True):
+                        st.session_state.user_profile["name"] = new_name
+
+                        # Prioridad: 1. Imagen subida, 2. Emoji seleccionado
+                        if uploaded_avatar is not None:
+                            img_bytes = uploaded_avatar.read()
+                            st.session_state.user_profile["avatar"] = img_bytes
+                            # Guardar la imagen físicamente
+                            with open(USER_AVATAR_PATH, "wb") as f:
+                                f.write(img_bytes)
+                        elif selected_emoji != "Emoji predeterminado":
+                            st.session_state.user_profile["avatar"] = selected_emoji
+                            # Borrar avatar anterior si existe
+                            if USER_AVATAR_PATH.exists(): USER_AVATAR_PATH.unlink()
+
+                        # Guardar configuración en JSON
+                        save_user_profile(st.session_state.user_profile)
+                        st.success("¡Perfil guardado permanentemente!")
+                        st.rerun()
+
+                # Mostrar previsualización actual
+                st.write("**Vista previa actual:**")
+                st.chat_message("user", avatar=st.session_state.user_profile["avatar"]).write(f"Hola, soy {st.session_state.user_profile['name']}")
+
+                st.divider()
+                st.caption("Ajustes del Asistente")
+                current_auto_view = st.session_state.user_profile["auto_view"]
+                new_auto_view = st.checkbox(
+                    "Auto-visualizar documentos",
+                    value=current_auto_view,
+                    help="Abre automáticamente el visor al detectar información relevante o menciones."
+                )
+                if new_auto_view != current_auto_view:
+                    st.session_state.user_profile["auto_view"] = new_auto_view
+                    save_user_profile(st.session_state.user_profile)
+
             else:
-                st.info("La carpeta `@apuntes` está vacía.")
+                st.markdown("⚙️ **SISTEMA**")
+                if st.button("🚀 Re-indexar Lite", use_container_width=True): run_indexing("lite")
+                if st.button("🗑️ Limpiar Chat", use_container_width=True):
+                    st.session_state.messages = []
+                    st.session_state.active_mentions = []
+                    st.rerun()
+
+    # --- MAIN LAYOUT ---
+    v, c = st.columns([2.3, 1])
+
+    with v:
+        if st.session_state.selected_doc:
+            render_doc_viewer(st.session_state.selected_doc["source"], st.session_state.selected_doc["metadata"])
         else:
-            st.error("No se encontró la carpeta `@apuntes`.")
+            st.info("Selecciona un archivo de la izquierda o usa la barra de comandos para comenzar.")
 
-        st.divider()
+    with c:
+        # 1. Contenedor de chat con scroll ajustable
+        # Calculamos una altura que intente llenar el panel derecho
+        chat_box = st.container(height=720) # Aumentado para reducir el hueco inferior
+        with chat_box:
+            for msg in st.session_state.messages:
+                avatar = st.session_state.user_profile["avatar"] if msg["role"] == "user" else AI_AVATAR
+                with st.chat_message(msg["role"], avatar=avatar):
+                    st.markdown(msg["content"])
 
-        st.subheader("🔄 Actualizar Índice")
-        col1, col2 = st.columns(2)
-        if col1.button("🚀 Modo Lite", help="Extracción de texto rápida y gratuita"):
-            run_indexing(mode="lite")
-        if col2.button("👁️ Modo Visión", help="Analiza diagramas e imágenes (requiere API Key)"):
-            run_indexing(mode="vision")
+        # 2. BARRA DE COMANDOS FLOTANTE (Anclada al fondo de la columna)
+        # Eliminamos el div de altura fija que creaba el espacio vacío
 
-        st.divider()
+        # Esta sección se queda fija abajo mediante el CSS de .stChatInputContainer y el padding de .chat-panel
+        with st.container():
+            st.caption("🔍 Menciona archivos con @")
+            display_options = [f"@{f}" for f in all_files]
+            sel_mentions = st.multiselect(
+                "mentions",
+                options=display_options,
+                default=st.session_state.active_mentions,
+                placeholder="Escribe @ para filtrar...",
+                label_visibility="collapsed",
+                key="chat_mentions_bottom"
+            )
 
-        if st.button("🗑️ Limpiar Historial"):
-            st.session_state.messages = []
-            st.rerun()
+            query = st.chat_input("Escribe tu duda... (Usa el cuadro de arriba para el @)")
 
-    # Inicializar historial de chat
-    if "messages" not in st.session_state:
-        st.session_state.messages = []
+            if query:
+                st.session_state.messages.append({"role": "user", "content": query})
+                with chat_box:
+                    with st.chat_message("user", avatar=st.session_state.user_profile["avatar"]):
+                        st.markdown(query)
+                    with st.chat_message("assistant", avatar=AI_AVATAR):
+                        idx = st.session_state.get("index") or load_index()
+                        st.session_state.index = idx
+                        with st.spinner("..."):
+                            try:
+                                f_filter = None
+                                all_mentions = [m.lstrip("@") for m in sel_mentions]
+                                for name in all_files:
+                                    if f"@{name}" in query: all_mentions.append(name)
 
-    # Mostrar historial de chat
-    for message in st.session_state.messages:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
-            if "sources" in message and message["sources"]:
-                with st.expander("📚 Ver fuentes y fragmentos encontrados"):
-                    for src in message["sources"]:
-                        is_visual = any(ext in src["source"].lower() for ext in [".png", ".jpg", ".jpeg", ".pdf", ".docx"])
-                        render_source(src["source"], src["metadata"], expanded=is_visual)
+                                if all_mentions:
+                                    target = all_mentions[0]
+                                    st.caption(f"🎯 Contexto: `{target}`")
+                                    f_filter = MetadataFilters(filters=[ExactMatchFilter(key="source", value=f"apuntes/{target}")])
 
-    # Input del usuario
-    user_query = st.chat_input("Escribe tu duda sobre SMR...")
+                                eng = idx.as_query_engine(similarity_top_k=5, filters=f_filter)
 
-    if user_query:
-        if not index:
-            st.error("El índice no está cargado. Por favor, usa la barra lateral para indexar tus apuntes.")
-            return
+                                try:
+                                    res = eng.query(query)
+                                    answer = str(res)
+                                    sources_nodes = getattr(res, "source_nodes", [])
+                                except Exception as ai_err:
+                                    err_msg = str(ai_err).lower()
+                                    if any(x in err_msg for x in ["503", "429", "unavailable", "overloaded", "quota"]):
+                                        answer = "⚠️ **Servidor de Google saturado.**\n\nNo puedo redactar una respuesta ahora mismo, pero he localizado los documentos relevantes en tus apuntes. Échales un vistazo en el visor de la izquierda."
+                                        # Modo Supervivencia: Recuperar fragmentos sin generar texto
+                                        retriever = idx.as_retriever(similarity_top_k=3, filters=f_filter)
+                                        sources_nodes = retriever.retrieve(query)
+                                    else:
+                                        raise ai_err
 
-        # Mostrar pregunta del usuario
-        with st.chat_message("user"):
-            st.markdown(user_query)
+                                st.markdown(answer)
+                                st.session_state.messages.append({"role": "assistant", "content": answer})
 
-        st.session_state.messages.append({"role": "user", "content": user_query})
+                                # --- LÓGICA DE APERTURA INTELIGENTE (Incluye Survival Mode) ---
+                                if sources_nodes and st.session_state.user_profile.get("auto_view", True):
+                                    # Abrir siempre si es Modo Supervivencia o mención específica con @
+                                    is_survival = "saturado" in answer
 
-        # Generar respuesta
-        with st.chat_message("assistant"):
-            with st.spinner("Consultando base de conocimientos..."):
-                try:
-                    # Lógica para detectar menciones @archivo
-                    filters = None
-                    apuntes_dir = PROJECT_ROOT / "apuntes"
-                    if apuntes_dir.exists():
-                        available_files = [f.name for f in apuntes_dir.glob("*") if f.is_file()]
-                        for filename in available_files:
-                            if f"@{filename}" in user_query:
-                                st.info(f"🔍 Filtrando búsqueda solo en: `{filename}`")
-                                filters = MetadataFilters(filters=[
-                                    ExactMatchFilter(key="source", value=f"apuntes/{filename}")
-                                ])
-                                break
+                                    if is_survival or f_filter is not None:
+                                        m = sources_nodes[0].metadata
+                                        st.session_state.selected_doc = {"source": m["source"], "metadata": m}
+                                        st.session_state.active_mentions = []
+                                        st.rerun()
 
-                    from llama_index.core import PromptTemplate
-
-                    qa_prompt_str = (
-                        "Contexto de los apuntes:\n"
-                        "---------------------\n"
-                        "{context_str}\n"
-                        "---------------------\n"
-                        "Dada la información anterior, responde a la pregunta: {query_str}\n\n"
-                        "INSTRUCCIÓN PARA EL ASISTENTE SMR KRAYON:\n"
-                        "Si el usuario pide ver imágenes o diagramas, confirma que has encontrado el documento "
-                        "y dile que puede ver las previsualizaciones visuales justo debajo de tu respuesta. "
-                        "El sistema las mostrará automáticamente. NUNCA digas que no tienes imágenes si hay contexto disponible."
-                    )
-                    qa_prompt = PromptTemplate(qa_prompt_str)
-
-                    query_engine = index.as_query_engine(
-                        similarity_top_k=10,
-                        response_mode="compact",
-                        filters=filters,
-                        text_qa_template=qa_prompt
-                    )
-
-                    try:
-                        response = query_engine.query(user_query)
-                        answer = str(response)
-                        sources_nodes = getattr(response, "source_nodes", [])
-                    except Exception as ai_err:
-                        err_str = str(ai_err).lower()
-                        if any(x in err_str for x in ["insufficient_quota", "429", "503", "unavailable", "overloaded"]):
-                            st.warning("⚠️ Los servidores de Google están saturados o sin cuota. Mostrando fragmentos encontrados directamente.")
-                            # Intentar solo recuperación si falla la generación
-                            retriever = index.as_retriever(similarity_top_k=5, filters=filters)
-                            sources_nodes = retriever.retrieve(user_query)
-                            answer = "He encontrado información relevante en tus apuntes, pero la IA de Google no puede redactar un resumen en este momento (Servidor saturado o sin cuota). Revisa las fuentes abajo para ver los diagramas y textos."
-                        else:
-                            raise ai_err
-
-                    # Extraer fuentes de forma segura
-                    sources = []
-                    seen = set()
-                    for node in sources_nodes:
-                        meta = node.metadata
-                        src_id = (meta.get("source"), meta.get("page"))
-                        if src_id not in seen:
-                            sources.append({
-                                "source": meta.get("source"),
-                                "metadata": meta
-                            })
-                            seen.add(src_id)
-
-                    st.markdown(answer)
-
-                    if sources:
-                        with st.expander("📚 Ver fuentes y fragmentos encontrados"):
-                            for src in sources:
-                                is_visual = any(ext in src["source"].lower() for ext in [".png", ".jpg", ".jpeg", ".pdf", ".docx"])
-                                render_source(src["source"], src["metadata"], expanded=is_visual)
-
-                    st.session_state.messages.append({
-                        "role": "assistant",
-                        "content": answer,
-                        "sources": sources
-                    })
-
-                except Exception as e:
-                    error_msg = f"Error al procesar la consulta: {str(e)}"
-                    st.error(error_msg)
-                    st.session_state.messages.append({
-                        "role": "assistant",
-                        "content": error_msg
-                    })
+                                    # Para búsquedas generales, ignorar saludos
+                                    else:
+                                        greetings = ["hola", "buenas", "que tal", "quién eres", "ayuda"]
+                                        is_greeting = any(g in query.lower() for g in greetings)
+                                        if len(query) > 20 and not is_greeting:
+                                            m = sources_nodes[0].metadata
+                                            st.session_state.selected_doc = {"source": m["source"], "metadata": m}
+                                            st.rerun()
+                            except Exception as e: st.error(f"Error: {e}")
 
 if __name__ == "__main__":
     main()
