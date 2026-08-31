@@ -6,6 +6,10 @@ Usa Google Gemini para la lógica de LLM (GRATIS).
 from __future__ import annotations
 
 import os
+import time
+# Workaround para errores de Protobuf en versiones nuevas de Python
+os.environ["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"
+import google.generativeai as genai
 from pathlib import Path
 
 import chromadb
@@ -13,8 +17,8 @@ import pymupdf
 from docx import Document as DocxDocument
 from dotenv import load_dotenv
 from llama_index.core import Document, Settings, SimpleDirectoryReader, StorageContext, VectorStoreIndex
-from llama_index.embeddings.huggingface import HuggingFaceEmbedding
-from llama_index.llms.google_genai import GoogleGenAI
+from llama_index.embeddings.google import GeminiEmbedding
+from llama_index.llms.gemini import Gemini
 from llama_index.vector_stores.chroma import ChromaVectorStore
 
 
@@ -74,17 +78,23 @@ def load_documents(progress_callback=None) -> list[Document]:
 
 
 def build_index(progress_callback=None) -> VectorStoreIndex:
-    """Construye el índice RAG con embeddings locales (sin costes)."""
+    """Construye el índice RAG con embeddings de Google (sin PyTorch local)."""
     load_dotenv(PROJECT_ROOT / ".env")
 
-    # Usar embeddings locales
-    Settings.embed_model = HuggingFaceEmbedding(
-        model_name="sentence-transformers/all-MiniLM-L6-v2"
+    google_key = os.getenv("GOOGLE_API_KEY")
+
+    # Forzamos la configuración global del SDK para aceptar claves con formato AQ.
+    if google_key:
+        genai.configure(api_key=google_key)
+
+    # Usar embeddings con mayor cuota disponible
+    Settings.embed_model = GeminiEmbedding(
+        model_name="models/gemini-embedding-001",
+        api_key=google_key
     )
 
-    google_key = os.getenv("GOOGLE_API_KEY")
     if google_key:
-        Settings.llm = GoogleGenAI(model="models/gemini-flash-latest", api_key=google_key)
+        Settings.llm = Gemini(model_name="models/gemini-flash-latest", api_key=google_key)
     else:
         if progress_callback:
             progress_callback("⚠️ Sin GOOGLE_API_KEY: las respuestas usarán solo recuperación.")
@@ -106,10 +116,38 @@ def build_index(progress_callback=None) -> VectorStoreIndex:
     vector_store = ChromaVectorStore(chroma_collection=collection)
     storage_context = StorageContext.from_defaults(vector_store=vector_store)
 
+    # Procesar en bloques para evitar error 429 de cuota
+    if progress_callback:
+        progress_callback(f"✓ Iniciando indexación controlada de {len(documents)} fragmentos...")
+
+    # Creamos el índice con el primer documento para inicializarlo
     index = VectorStoreIndex.from_documents(
-        documents,
+        [documents[0]],
         storage_context=storage_context,
     )
+
+    # Añadimos el resto en bloques de 5 con pausas
+    batch_size = 5
+    for i in range(1, len(documents), batch_size):
+        batch = documents[i : i + batch_size]
+        if progress_callback:
+            progress_callback(f"📦 Procesando bloque {int(i/batch_size) + 1}... ({i}/{len(documents)})")
+
+        # Reintentar en caso de error de cuota
+        success = False
+        while not success:
+            try:
+                for doc in batch:
+                    index.insert(doc)
+                success = True
+                time.sleep(2) # Pausa corta entre bloques
+            except Exception as e:
+                if "429" in str(e):
+                    if progress_callback:
+                        progress_callback("⏳ Cuota agotada temporalmente. Esperando 15 segundos...")
+                    time.sleep(15)
+                else:
+                    raise e
 
     if progress_callback:
         progress_callback(f"✓ Índice creado correctamente con {len(index.docstore.docs)} fragmentos.")

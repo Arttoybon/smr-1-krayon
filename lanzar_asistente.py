@@ -12,6 +12,9 @@ def get_project_root():
     return Path(__file__).parent.absolute()
 
 def main():
+    # Workaround para errores de Protobuf en versiones nuevas de Python
+    os.environ["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"
+
     project_root = get_project_root()
     venv_python = project_root / ".venv" / "Scripts" / "python.exe"
     python_exe = str(venv_python) if venv_python.exists() else sys.executable
@@ -38,8 +41,11 @@ def main():
         "run",
         str(app_path),
         "--server.port=8501",
+        "--server.address=0.0.0.0",
         "--server.headless=true",
         "--browser.gatherUsageStats=false",
+        "--server.enableCORS=false",
+        "--server.enableXsrfProtection=true",
         "--global.developmentMode=false"
     ]
 

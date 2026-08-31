@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import os
+import time
+# Workaround para errores de Protobuf en versiones nuevas de Python
+os.environ["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"
 import base64
+import google.generativeai as genai
 from pathlib import Path
 
 import chromadb
@@ -11,8 +15,8 @@ from PIL import Image
 from io import BytesIO
 from dotenv import load_dotenv
 from llama_index.core import Document, Settings, SimpleDirectoryReader, StorageContext, VectorStoreIndex
-from llama_index.embeddings.huggingface import HuggingFaceEmbedding
-from llama_index.llms.google_genai import GoogleGenAI
+from llama_index.embeddings.google import GeminiEmbedding
+from llama_index.llms.gemini import Gemini
 from llama_index.multi_modal_llms.gemini import GeminiMultiModal
 from llama_index.core.schema import ImageDocument
 from llama_index.vector_stores.chroma import ChromaVectorStore
@@ -172,10 +176,14 @@ def build_index(progress_callback=None) -> VectorStoreIndex:
     if not google_key:
         raise RuntimeError("Falta GOOGLE_API_KEY en el archivo .env")
 
-    # Configurar modelos para el índice
-    Settings.llm = GoogleGenAI(model="models/gemini-flash-latest", api_key=google_key)
-    Settings.embed_model = HuggingFaceEmbedding(
-        model_name="sentence-transformers/all-MiniLM-L6-v2"
+    # Forzamos la configuración global del SDK para aceptar claves con formato AQ.
+    genai.configure(api_key=google_key)
+
+    # Configurar modelos con mayor cuota
+    Settings.llm = Gemini(model_name="models/gemini-flash-latest", api_key=google_key)
+    Settings.embed_model = GeminiEmbedding(
+        model_name="models/gemini-embedding-001",
+        api_key=google_key
     )
 
     documents = load_documents(progress_callback=progress_callback)
@@ -194,10 +202,35 @@ def build_index(progress_callback=None) -> VectorStoreIndex:
     vector_store = ChromaVectorStore(chroma_collection=collection)
     storage_context = StorageContext.from_defaults(vector_store=vector_store)
 
+    # Procesar en bloques para evitar error 429 de cuota (Rate Limit)
+    if progress_callback:
+        progress_callback(f"✓ Iniciando indexación con visión de {len(documents)} fragmentos...")
+
     index = VectorStoreIndex.from_documents(
-        documents,
+        [documents[0]],
         storage_context=storage_context,
     )
+
+    batch_size = 3 # Más pequeño porque visión consume más cuota
+    for i in range(1, len(documents), batch_size):
+        batch = documents[i : i + batch_size]
+        if progress_callback:
+            progress_callback(f"🔍 Analizando bloque {int(i/batch_size) + 1}... ({i}/{len(documents)})")
+
+        success = False
+        while not success:
+            try:
+                for doc in batch:
+                    index.insert(doc)
+                success = True
+                time.sleep(5) # Pausa más larga para visión
+            except Exception as e:
+                if "429" in str(e):
+                    if progress_callback:
+                        progress_callback("⏳ Cuota Gemini agotada. Esperando 20 segundos...")
+                    time.sleep(20)
+                else:
+                    raise e
 
     if progress_callback:
         progress_callback(f"✓ Índice creado correctamente con {len(index.docstore.docs)} fragmentos.")

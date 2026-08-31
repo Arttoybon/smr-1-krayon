@@ -58,13 +58,16 @@ def load_user_profile():
 # --- CONFIGURACIÓN DE SILENCIO ---
 os.environ["STREAMLIT_BROWSER_GATHER_USAGE_STATS"] = "false"
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
+# Workaround para errores de Protobuf en versiones nuevas de Python
+os.environ["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"
 logging.getLogger("transformers").setLevel(logging.ERROR)
 logging.getLogger("streamlit").setLevel(logging.ERROR)
 
 from llama_index.core import Settings, StorageContext, VectorStoreIndex, PromptTemplate
 from llama_index.core.vector_stores import MetadataFilters, ExactMatchFilter
-from llama_index.llms.google_genai import GoogleGenAI
-from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+import google.generativeai as genai
+from llama_index.llms.gemini import Gemini
+from llama_index.embeddings.google import GeminiEmbedding
 from llama_index.vector_stores.chroma import ChromaVectorStore
 from PIL import Image
 
@@ -77,18 +80,30 @@ from scripts import indexar_lite, indexar
 def load_index() -> VectorStoreIndex:
     load_dotenv(PROJECT_ROOT / ".env")
     google_key = os.getenv("GOOGLE_API_KEY")
-    if google_key:
-        Settings.llm = GoogleGenAI(model="models/gemini-flash-latest", api_key=google_key)
-    else:
-        st.error("❌ Falta API Key")
+    if not google_key:
+        st.error("❌ Falta API Key en el archivo .env")
         st.stop()
-    Settings.embed_model = HuggingFaceEmbedding(model_name="sentence-transformers/all-MiniLM-L6-v2")
+
+    # Forzamos la configuración global del SDK para aceptar claves con formato AQ.
+    genai.configure(api_key=google_key)
+
+    # Usamos modelos Flash-Latest que tienen mayor cuota gratuita
+    Settings.llm = Gemini(model_name="models/gemini-flash-latest", api_key=google_key)
+    Settings.embed_model = GeminiEmbedding(model_name="models/gemini-embedding-001", api_key=google_key)
+
     vector_db_dir = PROJECT_ROOT / "chroma_db"
-    if not vector_db_dir.exists(): return None
-    chroma_client = chromadb.PersistentClient(path=str(vector_db_dir))
-    collection = chroma_client.get_or_create_collection(name=os.getenv("CHROMA_COLLECTION", "apuntes"))
-    vector_store = ChromaVectorStore(chroma_collection=collection)
-    return VectorStoreIndex.from_vector_store(vector_store=vector_store)
+    if not vector_db_dir.exists():
+        return None
+
+    try:
+        chroma_client = chromadb.PersistentClient(path=str(vector_db_dir))
+        collection = chroma_client.get_or_create_collection(name=os.getenv("CHROMA_COLLECTION", "apuntes"))
+
+        vector_store = ChromaVectorStore(chroma_collection=collection)
+        return VectorStoreIndex.from_vector_store(vector_store=vector_store)
+    except Exception as e:
+        st.error(f"Error en base de datos: {e}")
+        return None
 
 def run_indexing(mode="lite"):
     status_text = st.empty()
@@ -101,9 +116,15 @@ def run_indexing(mode="lite"):
     except Exception as e: st.error(f"Error: {e}")
 
 def render_doc_viewer(source_path, metadata):
-    """Renderiza el documento en el panel central."""
+    """Renderiza el contenido del documento en el panel central."""
     full_path = PROJECT_ROOT / source_path
-    st.markdown(f"#### 📄 `{source_path.split('/')[-1]}`")
+
+    # Cabecera del visor con botón de cerrar
+    c1, c2 = st.columns([0.9, 0.1])
+    c1.markdown(f"#### 📄 `{source_path.split('/')[-1]}`")
+    if c2.button("✕", key="close_doc_btn", help="Cerrar visor"):
+        st.session_state.selected_doc = None
+        st.rerun()
 
     if full_path.suffix.lower() in [".jpg", ".jpeg", ".png"]:
         st.image(str(full_path), use_container_width=True)
@@ -120,10 +141,21 @@ def render_doc_viewer(source_path, metadata):
             doc = DocxDocument(full_path)
             txt = [p.text for p in doc.paragraphs if p.text.strip()]
             if txt:
-                with st.container(height=300): st.markdown("\n\n".join(txt))
+                # Estilo de hoja de papel para los DOCX
+                st.markdown(f"""
+                    <div style="background-color: white; color: #1e1e1e; padding: 25px; border-radius: 2px;
+                         box-shadow: 0 5px 15px rgba(0,0,0,0.3); font-family: 'Segoe UI', sans-serif;
+                         line-height: 1.6; margin-bottom: 20px; font-size: 14px;">
+                        {"<br><br>".join(txt)}
+                    </div>
+                """, unsafe_allow_html=True)
+
             with zipfile.ZipFile(full_path) as z:
                 media = [f for f in z.namelist() if f.startswith('word/media/')]
-                for img in media: st.image(z.open(img).read(), use_container_width=True)
+                if media:
+                    st.divider()
+                    st.caption("🖼️ Imágenes del documento:")
+                    for img in media: st.image(z.open(img).read(), use_container_width=True)
         except Exception: st.write("Error cargando Word")
 
 def main():
@@ -133,6 +165,22 @@ def main():
         layout="wide",
         initial_sidebar_state="expanded"
     )
+
+    # --- AUTO-INDEXACIÓN INICIAL ---
+    # Comprobar si hay documentos y si el índice existe. Si no, indexar automáticamente.
+    if "auto_indexed" not in st.session_state:
+        vector_db_dir = PROJECT_ROOT / "chroma_db"
+        if not vector_db_dir.exists():
+            with st.spinner("🚀 Inicializando base de conocimientos por primera vez..."):
+                try:
+                    indexar_lite.build_index()
+                    st.session_state.index = load_index()
+                    st.session_state.auto_indexed = True
+                    st.toast("✅ Base de conocimientos lista.")
+                except Exception as e:
+                    st.error(f"Error en la auto-indexación: {e}")
+        else:
+            st.session_state.auto_indexed = True
 
     # --- ESTILOS VS CODE PRO (NIVELACIÓN Y DISEÑO) ---
     st.markdown("""
@@ -229,7 +277,14 @@ def main():
     """, unsafe_allow_html=True)
 
     if "selected_doc" not in st.session_state: st.session_state.selected_doc = None
-    if "messages" not in st.session_state: st.session_state.messages = []
+
+    # Inicializar historial con mensaje motivacional si está vacío
+    if "messages" not in st.session_state or not st.session_state.messages:
+        st.session_state.messages = [{
+            "role": "assistant",
+            "content": "✨ ¡Hola! Soy tu Asistente SMR Krayon. Recuerda: *'La mejor forma de predecir el futuro es inventándolo'*. Estoy aquí para ayudarte a dominar tus apuntes. ¿Por dónde empezamos hoy? 🚀"
+        }]
+
     if "active_mentions" not in st.session_state: st.session_state.active_mentions = []
     if "active_tab" not in st.session_state: st.session_state.active_tab = "explorer"
 
@@ -331,12 +386,32 @@ def main():
                 st.markdown("⚙️ **SISTEMA**")
                 if st.button("🚀 Re-indexar Lite", use_container_width=True): run_indexing("lite")
                 if st.button("🗑️ Limpiar Chat", use_container_width=True):
-                    st.session_state.messages = []
+                    st.session_state.messages = [{
+                        "role": "assistant",
+                        "content": "✨ ¡Chat reiniciado! Nueva oportunidad para aprender algo increíble. ¿En qué trabajamos ahora? 💻"
+                    }]
                     st.session_state.active_mentions = []
                     st.rerun()
 
+                st.divider()
+                st.markdown("🌐 **COMPARTIR**")
+                try:
+                    import socket
+                    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                    s.connect(("8.8.8.8", 80))
+                    local_ip = s.getsockname()[0]
+                    s.close()
+                    st.write(f"🏠 **IP Local (Mismo Wi-Fi):**")
+                    st.code(f"http://{local_ip}:8501")
+                except:
+                    st.caption("No se pudo obtener la IP local.")
+
+                st.write(f"🌍 **A internet (Otras casas):**")
+                st.info("Usa localtunnel para saltar el Firewall:")
+                st.code("npx localtunnel --port 8501")
+
     # --- MAIN LAYOUT ---
-    v, c = st.columns([2.3, 1])
+    v, c = st.columns([1, 1])
 
     with v:
         if st.session_state.selected_doc:
@@ -345,19 +420,15 @@ def main():
             st.info("Selecciona un archivo de la izquierda o usa la barra de comandos para comenzar.")
 
     with c:
-        # 1. Contenedor de chat con scroll ajustable
-        # Calculamos una altura que intente llenar el panel derecho
-        chat_box = st.container(height=720) # Aumentado para reducir el hueco inferior
+        # 1. Contenedor de chat con scroll maximizado
+        chat_box = st.container(height=750)
         with chat_box:
             for msg in st.session_state.messages:
                 avatar = st.session_state.user_profile["avatar"] if msg["role"] == "user" else AI_AVATAR
                 with st.chat_message(msg["role"], avatar=avatar):
                     st.markdown(msg["content"])
 
-        # 2. BARRA DE COMANDOS FLOTANTE (Anclada al fondo de la columna)
-        # Eliminamos el div de altura fija que creaba el espacio vacío
-
-        # Esta sección se queda fija abajo mediante el CSS de .stChatInputContainer y el padding de .chat-panel
+        # 2. BARRA DE COMANDOS (Fija abajo)
         with st.container():
             st.caption("🔍 Menciona archivos con @")
             display_options = [f"@{f}" for f in all_files]
@@ -367,19 +438,47 @@ def main():
                 default=st.session_state.active_mentions,
                 placeholder="Escribe @ para filtrar...",
                 label_visibility="collapsed",
-                key="chat_mentions_bottom"
+                key="chat_mentions_v4"
             )
 
             query = st.chat_input("Escribe tu duda... (Usa el cuadro de arriba para el @)")
 
             if query:
                 st.session_state.messages.append({"role": "user", "content": query})
+
+                # --- DETECCIÓN DE RESPUESTA A PREGUNTA DE INTERNET ---
+                if "internet_query" in st.session_state and st.session_state.internet_query:
+                    if any(word in query.lower() for word in ["si", "sí", "claro", "vale", "adelante", "busca"]):
+                        target_query = st.session_state.internet_query
+                        with chat_box:
+                            with st.chat_message("user", avatar=st.session_state.user_profile["avatar"]): st.markdown(query)
+                            with st.chat_message("assistant", avatar=AI_AVATAR):
+                                with st.spinner("Buscando en internet..."):
+                                    try:
+                                        gen_prompt = f"El usuario quiere saber: '{target_query}'. Responde usando tu conocimiento general como experto SMR."
+                                        response = Settings.llm.complete(gen_prompt)
+                                        st.markdown(str(response))
+                                        st.session_state.messages.append({"role": "assistant", "content": str(response)})
+                                        st.session_state.internet_query = None
+                                        st.rerun()
+                                    except Exception as e: st.error(f"Error en internet: {e}")
+                        return
+                    else:
+                        st.session_state.internet_query = None
+
+                # --- FLUJO NORMAL ---
                 with chat_box:
                     with st.chat_message("user", avatar=st.session_state.user_profile["avatar"]):
                         st.markdown(query)
                     with st.chat_message("assistant", avatar=AI_AVATAR):
                         idx = st.session_state.get("index") or load_index()
                         st.session_state.index = idx
+
+                        if idx is None:
+                            st.warning("⚠️ No hay documentos indexados en la base de datos de la IA.")
+                            st.info("Para activarla: ve al icono de **Sistema** (⚙️) en la barra lateral y pulsa **🚀 Re-indexar Lite**.")
+                            st.stop()
+
                         with st.spinner("..."):
                             try:
                                 f_filter = None
@@ -389,47 +488,44 @@ def main():
 
                                 if all_mentions:
                                     target = all_mentions[0]
-                                    st.caption(f"🎯 Contexto: `{target}`")
                                     f_filter = MetadataFilters(filters=[ExactMatchFilter(key="source", value=f"apuntes/{target}")])
 
-                                eng = idx.as_query_engine(similarity_top_k=5, filters=f_filter)
+                                qa_prompt = PromptTemplate(
+                                    "Eres el Asistente SMR Krayon. CONTEXTO:\n{context_str}\n\n"
+                                    "Si la información NO está en el contexto, responde EXACTAMENTE: 'NO_DATA'. "
+                                    "Si está, responde detalladamente a: {query_str}"
+                                )
+
+                                eng = idx.as_query_engine(similarity_top_k=5, filters=f_filter, text_qa_template=qa_prompt)
 
                                 try:
                                     res = eng.query(query)
                                     answer = str(res)
                                     sources_nodes = getattr(res, "source_nodes", [])
                                 except Exception as ai_err:
-                                    err_msg = str(ai_err).lower()
-                                    if any(x in err_msg for x in ["503", "429", "unavailable", "overloaded", "quota"]):
-                                        answer = "⚠️ **Servidor de Google saturado.**\n\nNo puedo redactar una respuesta ahora mismo, pero he localizado los documentos relevantes en tus apuntes. Échales un vistazo en el visor de la izquierda."
-                                        # Modo Supervivencia: Recuperar fragmentos sin generar texto
+                                    err_msg = str(ai_err).upper()
+                                    if any(x in err_msg for x in ["503", "429", "RESOURCE_EXHAUSTED", "LIMIT"]):
+                                        answer = "⚠️ **Servidor saturado o cuota agotada.**\n\nHe localizado los documentos relevantes. Échales un vistazo en el visor."
                                         retriever = idx.as_retriever(similarity_top_k=3, filters=f_filter)
                                         sources_nodes = retriever.retrieve(query)
                                     else:
                                         raise ai_err
 
-                                st.markdown(answer)
-                                st.session_state.messages.append({"role": "assistant", "content": answer})
+                                if "NO_DATA" in answer or not answer or answer == "Empty Response":
+                                    st.session_state.internet_query = query
+                                    msg = "🧐 No tengo esa información en tus apuntes o la cuota de la IA está saturada. **¿Quieres que busque en internet por ti?**"
+                                    st.markdown(msg)
+                                    st.session_state.messages.append({"role": "assistant", "content": msg})
+                                else:
+                                    st.markdown(answer)
+                                    st.session_state.messages.append({"role": "assistant", "content": answer})
 
-                                # --- LÓGICA DE APERTURA INTELIGENTE (Incluye Survival Mode) ---
-                                if sources_nodes and st.session_state.user_profile.get("auto_view", True):
-                                    # Abrir siempre si es Modo Supervivencia o mención específica con @
-                                    is_survival = "saturado" in answer
-
-                                    if is_survival or f_filter is not None:
-                                        m = sources_nodes[0].metadata
-                                        st.session_state.selected_doc = {"source": m["source"], "metadata": m}
-                                        st.session_state.active_mentions = []
-                                        st.rerun()
-
-                                    # Para búsquedas generales, ignorar saludos
-                                    else:
-                                        greetings = ["hola", "buenas", "que tal", "quién eres", "ayuda"]
-                                        is_greeting = any(g in query.lower() for g in greetings)
-                                        if len(query) > 20 and not is_greeting:
+                                    if sources_nodes and st.session_state.user_profile.get("auto_view", True):
+                                        if f_filter is not None or (len(query) > 20 and "hola" not in query.lower()):
                                             m = sources_nodes[0].metadata
                                             st.session_state.selected_doc = {"source": m["source"], "metadata": m}
                                             st.rerun()
+
                             except Exception as e: st.error(f"Error: {e}")
 
 if __name__ == "__main__":
