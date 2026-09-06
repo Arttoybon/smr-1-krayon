@@ -96,8 +96,16 @@ def load_index() -> VectorStoreIndex:
         return None
 
     try:
-        chroma_client = chromadb.PersistentClient(path=str(vector_db_dir))
+        # Configuración optimizada para evitar bloqueos de Windows Defender
+        chroma_client = chromadb.PersistentClient(
+            path=str(vector_db_dir),
+            settings=chromadb.Settings(anonymized_telemetry=False, is_persistent=True)
+        )
         collection = chroma_client.get_or_create_collection(name=os.getenv("CHROMA_COLLECTION", "apuntes"))
+
+        # Si la colección está vacía, retornamos None para forzar la re-indexación
+        if collection.count() == 0:
+            return None
 
         vector_store = ChromaVectorStore(chroma_collection=collection)
         return VectorStoreIndex.from_vector_store(vector_store=vector_store)
@@ -166,20 +174,55 @@ def main():
         initial_sidebar_state="expanded"
     )
 
-    # --- AUTO-INDEXACIÓN INICIAL ---
-    # Comprobar si hay documentos y si el índice existe. Si no, indexar automáticamente.
+    # --- AUTO-INDEXACIÓN INTELIGENTE (A prueba de F5) ---
     if "auto_indexed" not in st.session_state:
-        vector_db_dir = PROJECT_ROOT / "chroma_db"
-        if not vector_db_dir.exists():
-            with st.spinner("🚀 Inicializando base de conocimientos por primera vez..."):
+        apuntes_dir = PROJECT_ROOT / "apuntes"
+        files_on_disk = [f for f in os.listdir(apuntes_dir) if f.endswith(('.pdf', '.docx')) and not f.startswith("~$")]
+
+        # Función para verificar integridad de la DB
+        def count_indexed_files():
+            try:
+                db_dir = PROJECT_ROOT / "chroma_db"
+                if not db_dir.exists(): return 0
+                client = chromadb.PersistentClient(path=str(db_dir), settings=chromadb.Settings(anonymized_telemetry=False, is_persistent=True))
+                collection = client.get_collection(name=os.getenv("CHROMA_COLLECTION", "apuntes"))
+                res = collection.get(include=['metadatas'])
+                if not res or not res['metadatas']: return 0
+                return len(set(m['source'].split('/')[-1] for m in res['metadatas'] if m))
+            except: return 0
+
+        indexed_count = count_indexed_files()
+
+        # Si faltan archivos o la DB está vacía, forzar sincronización
+        if indexed_count < len(files_on_disk):
+            status_container = st.empty()
+            with status_container.container():
+                st.info(f"🚀 Sincronizando base de conocimientos ({indexed_count}/{len(files_on_disk)} archivos listos)...")
+                progress_bar = st.progress(indexed_count / len(files_on_disk) if len(files_on_disk) > 0 else 0)
+                status_text = st.empty()
+
                 try:
-                    indexar_lite.build_index()
+                    def update_status(msg):
+                        try:
+                            if "[" in msg and "/" in msg:
+                                parts = msg.split("[")[1].split("]")[0].split(" ")
+                                ratio = parts[-1] if "/" in parts[-1] else parts[1]
+                                curr, tot = map(int, ratio.split("/"))
+                                if "Convirtiendo" in msg: p = (curr / tot) * 0.3
+                                else: p = 0.3 + (curr / tot) * 0.7
+                                progress_bar.progress(min(p, 1.0))
+                        except: pass
+                        status_text.markdown(f"**{msg}**")
+
+                    indexar_lite.build_index(progress_callback=update_status)
                     st.session_state.index = load_index()
                     st.session_state.auto_indexed = True
-                    st.toast("✅ Base de conocimientos lista.")
+                    status_container.empty()
+                    st.toast("✅ Base de conocimientos actualizada.")
                 except Exception as e:
-                    st.error(f"Error en la auto-indexación: {e}")
+                    st.error(f"Error en la sincronización: {e}")
         else:
+            st.session_state.index = load_index()
             st.session_state.auto_indexed = True
 
     # --- ESTILOS VS CODE PRO (NIVELACIÓN Y DISEÑO) ---
@@ -287,6 +330,7 @@ def main():
 
     if "active_mentions" not in st.session_state: st.session_state.active_mentions = []
     if "active_tab" not in st.session_state: st.session_state.active_tab = "explorer"
+    if "chat_key" not in st.session_state: st.session_state.chat_key = 0
 
     # Perfil del usuario persistente
     if "user_profile" not in st.session_state:
@@ -391,6 +435,7 @@ def main():
                         "content": "✨ ¡Chat reiniciado! Nueva oportunidad para aprender algo increíble. ¿En qué trabajamos ahora? 💻"
                     }]
                     st.session_state.active_mentions = []
+                    st.session_state.chat_key += 1
                     st.rerun()
 
                 st.divider()
@@ -421,7 +466,8 @@ def main():
 
     with c:
         # 1. Contenedor de chat con scroll maximizado
-        chat_box = st.container(height=750)
+        # Usamos un key dinámico para forzar la limpieza del DOM y evitar el error removeChild
+        chat_box = st.container(height=750, key=f"chat_box_{st.session_state.chat_key}")
         with chat_box:
             for msg in st.session_state.messages:
                 avatar = st.session_state.user_profile["avatar"] if msg["role"] == "user" else AI_AVATAR
@@ -482,24 +528,73 @@ def main():
                         with st.spinner("..."):
                             try:
                                 f_filter = None
+                                # Limpiar menciones y buscar archivos reales
                                 all_mentions = [m.lstrip("@") for m in sel_mentions]
                                 for name in all_files:
-                                    if f"@{name}" in query: all_mentions.append(name)
+                                    if f"@{name}" in query:
+                                        if name not in all_mentions: all_mentions.append(name)
 
                                 if all_mentions:
                                     target = all_mentions[0]
-                                    f_filter = MetadataFilters(filters=[ExactMatchFilter(key="source", value=f"apuntes/{target}")])
+                                    # Intentar coincidencia exacta o por nombre base (sin extensión)
+                                    base_target = target.rsplit(".", 1)[0]
+
+                                    # Ver si el archivo está indexado comprobando la base de datos
+                                    is_indexed = False
+                                    try:
+                                        # Comprobamos si hay algún nodo con ese origen
+                                        test_filter = MetadataFilters(filters=[ExactMatchFilter(key="source", value=f"apuntes/{target}")])
+                                        test_retriever = idx.as_retriever(similarity_top_k=1, filters=test_filter)
+                                        if test_retriever.retrieve("test"):
+                                            is_indexed = True
+                                            f_filter = test_filter
+                                    except: pass
+
+                                    if not is_indexed:
+                                        # Si no encontramos el .docx, probamos con el .pdf equivalente
+                                        other_ext = ".pdf" if target.endswith(".docx") else ".docx"
+                                        alt_target = base_target + other_ext
+                                        try:
+                                            alt_filter = MetadataFilters(filters=[ExactMatchFilter(key="source", value=f"apuntes/{alt_target}")])
+                                            alt_retriever = idx.as_retriever(similarity_top_k=1, filters=alt_filter)
+                                            if alt_retriever.retrieve("test"):
+                                                is_indexed = True
+                                                f_filter = alt_filter
+                                                st.caption(f"ℹ️ Usando versión {other_ext} de los apuntes.")
+                                        except: pass
+
+                                    if not is_indexed:
+                                        st.warning(f"⚠️ El archivo '{target}' aún no ha sido procesado por la IA.")
+                                        st.info("Ve a **Sistema (⚙️)** -> **Re-indexar Lite** para activarlo.")
+                                        st.stop()
 
                                 qa_prompt = PromptTemplate(
-                                    "Eres el Asistente SMR Krayon. CONTEXTO:\n{context_str}\n\n"
-                                    "Si la información NO está en el contexto, responde EXACTAMENTE: 'NO_DATA'. "
-                                    "Si está, responde detalladamente a: {query_str}"
+                                    "Eres el Asistente SMR Krayon, experto en Sistemas Microinformáticos y Redes. "
+                                    "Tu misión es ayudar al alumno usando los APUNTES proporcionados.\n\n"
+                                    "REGLAS:\n"
+                                    "1. Usa el CONTEXTO de abajo para responder.\n"
+                                    "2. Si el usuario pide un 'resumen', analiza todo el contexto y destaca los puntos clave.\n"
+                                    "3. Si realmente no hay nada de información sobre el tema, di: 'NO_DATA'.\n\n"
+                                    "CONTEXTO DE LOS APUNTES:\n{context_str}\n\n"
+                                    "PREGUNTA DEL ALUMNO: {query_str}"
                                 )
 
-                                eng = idx.as_query_engine(similarity_top_k=5, filters=f_filter, text_qa_template=qa_prompt)
+                                # Aumentamos la calidad ahorrando tokens (top_k=6 con texto limpio)
+                                eng = idx.as_query_engine(similarity_top_k=6, filters=f_filter, text_qa_template=qa_prompt)
 
                                 try:
-                                    res = eng.query(query)
+                                    # Añadimos un reintento automático para errores de cuota temporales
+                                    max_retries = 1
+                                    for attempt in range(max_retries + 1):
+                                        try:
+                                            res = eng.query(query)
+                                            break
+                                        except Exception as e:
+                                            if attempt < max_retries and any(x in str(e).upper() for x in ["429", "503", "LIMIT"]):
+                                                time.sleep(2) # Espera corta y reintento
+                                                continue
+                                            raise e
+
                                     answer = str(res)
                                     sources_nodes = getattr(res, "source_nodes", [])
                                 except Exception as ai_err:
@@ -513,7 +608,8 @@ def main():
 
                                 if "NO_DATA" in answer or not answer or answer == "Empty Response":
                                     st.session_state.internet_query = query
-                                    msg = "🧐 No tengo esa información en tus apuntes o la cuota de la IA está saturada. **¿Quieres que busque en internet por ti?**"
+                                    st.warning("🧐 No he encontrado información específica en los apuntes seleccionados.")
+                                    msg = "¿Quieres que busque en internet por ti para darte una respuesta general?"
                                     st.markdown(msg)
                                     st.session_state.messages.append({"role": "assistant", "content": msg})
                                 else:

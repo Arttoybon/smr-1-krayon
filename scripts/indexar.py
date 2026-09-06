@@ -88,7 +88,6 @@ def load_documents(progress_callback=None) -> list[Document]:
             msg = f"Procesando PDF con visión ({i}/{len(pdf_paths)}): {pdf_path.name}"
             if progress_callback:
                 progress_callback(msg)
-            print(msg)
             try:
                 with pymupdf.open(pdf_path) as pdf:
                     for page_number, page in enumerate(pdf, start=1):
@@ -123,7 +122,6 @@ def load_documents(progress_callback=None) -> list[Document]:
             msg = f"Procesando DOCX ({i}/{len(docx_paths)}): {docx_path.name}"
             if progress_callback:
                 progress_callback(msg)
-            print(msg)
             try:
                 doc = DocxDocument(docx_path)
                 full_text = [para.text for para in doc.paragraphs]
@@ -147,7 +145,6 @@ def load_documents(progress_callback=None) -> list[Document]:
             msg = f"Analizando diagrama ({i}/{len(img_paths)}): {img_path.name}"
             if progress_callback:
                 progress_callback(msg)
-            print(msg)
             try:
                 description = describe_image_with_gemini(
                     mm_model,

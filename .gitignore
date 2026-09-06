@@ -13,6 +13,7 @@ __pycache__/
 storage/
 chroma_db/
 qdrant_storage/
+apuntes_limpios/
 
 # Configuración y avatar local del usuario
 app/user_avatar.png
