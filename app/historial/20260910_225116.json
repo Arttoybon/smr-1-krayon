@@ -1,0 +1,50 @@
+[
+    {
+        "role": "assistant",
+        "content": "✨ ¡Hola! Soy tu Asistente SMR Krayon. Recuerda: *'La mejor forma de predecir el futuro es inventándolo'*. Estoy aquí para ayudarte a dominar tus apuntes. ¿Por dónde empezamos hoy? 🚀"
+    },
+    {
+        "role": "user",
+        "content": "hola"
+    },
+    {
+        "role": "assistant",
+        "content": "¡Hola, Rosa! 👋 Soy tu Asistente SMR Krayon. Estoy listo para ayudarte con tus apuntes. ¿Qué quieres repasar hoy?"
+    },
+    {
+        "role": "user",
+        "content": "como me llamo?"
+    },
+    {
+        "role": "assistant",
+        "content": "Te llamas **Rosa**. ¡Un placer saludarte de nuevo! 😊 ¿Necesitas ayuda con algún tema de SMR?"
+    },
+    {
+        "role": "user",
+        "content": "que fue lo primero que te pregunté?"
+    },
+    {
+        "role": "user",
+        "content": "¿que fue lo priemro que te pregunté?"
+    },
+    {
+        "role": "assistant",
+        "content": "Lo primero que me preguntaste fue: **\"¿cómo me llamo?\"** (después de haberme saludado con un *\"hola\"*). 😊\n\n¿En qué más te puedo ayudar hoy con tus apuntes de SMR?"
+    },
+    {
+        "role": "user",
+        "content": "pepe  como te llamas?"
+    },
+    {
+        "role": "assistant",
+        "content": "¡No me llamo Pepe! 😉 Soy tu **Asistente SMR Krayon**, tu asistente para el ciclo de SMR. \n\n¿En qué te puedo ayudar hoy, Rosa?"
+    },
+    {
+        "role": "user",
+        "content": "genera una imagen"
+    },
+    {
+        "role": "assistant",
+        "content": "⚠️ **La IA está tomando un respiro (Cuota agotada).**\n\nComo acabamos de procesar muchos documentos, Google nos pide esperar unos segundos. Inténtalo de nuevo en un momento o consulta los documentos directamente en el visor."
+    }
+]

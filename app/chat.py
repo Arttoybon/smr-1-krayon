@@ -16,6 +16,32 @@ from docx import Document as DocxDocument
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 CONFIG_FILE = PROJECT_ROOT / "app" / "user_config.json"
 USER_AVATAR_PATH = PROJECT_ROOT / "app" / "user_avatar.png"
+HISTORY_DIR = PROJECT_ROOT / "app" / "historial"
+HISTORY_DIR.mkdir(exist_ok=True)
+
+def save_conversation(conv_id, messages):
+    """Guarda una conversación en un archivo JSON."""
+    file_path = HISTORY_DIR / f"{conv_id}.json"
+    with open(file_path, "w", encoding="utf-8") as f:
+        json.dump(messages, f, ensure_ascii=False, indent=4)
+
+def load_conversation(conv_id):
+    """Carga una conversación desde un archivo JSON."""
+    file_path = HISTORY_DIR / f"{conv_id}.json"
+    if file_path.exists():
+        with open(file_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return []
+
+def list_conversations():
+    """Lista los IDs de las conversaciones guardadas."""
+    return sorted([f.stem for f in HISTORY_DIR.glob("*.json")], reverse=True)
+
+def delete_conversation(conv_id):
+    """Elimina una conversación guardada."""
+    file_path = HISTORY_DIR / f"{conv_id}.json"
+    if file_path.exists():
+        file_path.unlink()
 
 def save_user_profile(profile):
     """Guarda el perfil del usuario en un archivo JSON local."""
@@ -307,6 +333,24 @@ def main():
             fill: var(--accent) !important;
         }
 
+        /* AVATARES MÁS GRANDES */
+        [data-testid="stChatMessageAvatar"] {
+            width: 80px !important;
+            height: 80px !important;
+            border-radius: 12px !important;
+            background: var(--bg-card) !important;
+            border: 1px solid var(--border) !important;
+        }
+        [data-testid="stChatMessageAvatar"] img, [data-testid="stChatMessageAvatar"] div {
+            width: 80px !important;
+            height: 80px !important;
+            object-fit: cover !important;
+        }
+        [data-testid="stChatMessage"] {
+            padding-top: 2rem !important;
+            padding-bottom: 2rem !important;
+        }
+
         /* Contenedores y Layout */
         [data-testid="stAppViewContainer"] { height: 100vh; overflow: hidden; }
         .main .block-container {
@@ -370,12 +414,14 @@ def main():
     if "messages" not in st.session_state or not st.session_state.messages:
         st.session_state.messages = [{
             "role": "assistant",
-            "content": "✨ ¡Hola! Soy tu Asistente SMR Krayon. Recuerda: *'La mejor forma de predecir el futuro es inventándolo'*. Estoy aquí para ayudarte a dominar tus apuntes. ¿Por dónde empezamos hoy? 🚀"
+            "content": "✨ ¡Hola! Soy tu Well, Actually. Recuerda: *'La mejor forma de predecir el futuro es inventándolo'*. Estoy aquí para ayudarte a dominar tus apuntes. ¿Por dónde empezamos hoy? 🚀"
         }]
 
     if "active_mentions" not in st.session_state: st.session_state.active_mentions = []
     if "active_tab" not in st.session_state: st.session_state.active_tab = "explorer"
     if "chat_key" not in st.session_state: st.session_state.chat_key = 0
+    if "current_conv_id" not in st.session_state:
+        st.session_state.current_conv_id = time.strftime("%Y%m%d_%H%M%S")
 
     # Perfil del usuario persistente
     if "user_profile" not in st.session_state:
@@ -404,6 +450,7 @@ def main():
         col_i, col_c = st.columns([1.2, 3.8])
         with col_i:
             if st.button("📁", key="b1", help="Explorador"): st.session_state.active_tab = "explorer"
+            if st.button("💬", key="b_chat", help="Historial"): st.session_state.active_tab = "history"
             if st.button("⚙️", key="b2", help="Sistema"): st.session_state.active_tab = "system"
             if st.button("👤", key="b3", help="Perfil"): st.session_state.active_tab = "profile"
             st.markdown("<br><br>", unsafe_allow_html=True)
@@ -419,6 +466,38 @@ def main():
                             st.session_state.active_mentions = [f"@{f}"]
                 else:
                     st.caption("Carpeta vacía")
+
+            elif st.session_state.active_tab == "history":
+                st.markdown("💬 **HISTORIAL**")
+                if st.button("➕ Nueva Conversación", use_container_width=True):
+                    st.session_state.current_conv_id = time.strftime("%Y%m%d_%H%M%S")
+                    st.session_state.messages = [{
+                        "role": "assistant",
+                        "content": "✨ ¡Hola! Nueva conversación iniciada. ¿En qué puedo ayudarte?"
+                    }]
+                    st.session_state.chat_key += 1
+                    st.rerun()
+
+                st.divider()
+                convs = list_conversations()
+                if convs:
+                    for c_id in convs:
+                        col_text, col_del = st.columns([0.8, 0.2])
+                        # Formatear fecha para mostrar
+                        display_name = c_id.replace("_", " ")
+                        if col_text.button(f" {display_name}", key=f"conv_{c_id}", use_container_width=True):
+                            st.session_state.current_conv_id = c_id
+                            st.session_state.messages = load_conversation(c_id)
+                            st.session_state.chat_key += 1
+                            st.rerun()
+                        if col_del.button("🗑️", key=f"del_{c_id}"):
+                            delete_conversation(c_id)
+                            if st.session_state.current_conv_id == c_id:
+                                st.session_state.current_conv_id = time.strftime("%Y%m%d_%H%M%S")
+                                st.session_state.messages = []
+                            st.rerun()
+                else:
+                    st.caption("No hay chats guardados.")
 
             elif st.session_state.active_tab == "profile":
                 st.markdown("👤 **MI PERFIL**")
@@ -534,12 +613,24 @@ def main():
 
             if query:
                 st.session_state.messages.append({"role": "user", "content": query})
+                save_conversation(st.session_state.current_conv_id, st.session_state.messages)
 
                 # --- RESPUESTA RÁPIDA A SALUDOS (Ahorro de cuota) ---
                 saludos = ["hola", "buenas", "buenos dias", "buenas tardes", "hola!", "hola?", "ey", "hi", "hello"]
-                if query.lower().strip().strip("!").strip("?") in saludos:
-                    res_hola = "¡Hola! 👋 Soy tu Asistente SMR Krayon. Estoy listo para ayudarte con tus apuntes. ¿Qué quieres repasar hoy?"
+                user_name = st.session_state.user_profile.get("name", "Estudiante")
+
+                query_clean = query.lower().strip().strip("!").strip("?")
+
+                if query_clean in saludos:
+                    res_hola = f"¡Hola, {user_name}! 👋 Soy tu Well, Actually. Estoy listo para ayudarte con tus apuntes. ¿Qué quieres repasar hoy?"
                     st.session_state.messages.append({"role": "assistant", "content": res_hola})
+                    save_conversation(st.session_state.current_conv_id, st.session_state.messages)
+                    st.rerun()
+
+                if "mi nombre" in query_clean or "como me llamo" in query_clean or "quien soy" in query_clean:
+                    res_name = f"Te llamas **{user_name}**. ¡Un placer saludarte de nuevo! 😊 ¿Necesitas ayuda con algún tema de SMR?"
+                    st.session_state.messages.append({"role": "assistant", "content": res_name})
+                    save_conversation(st.session_state.current_conv_id, st.session_state.messages)
                     st.rerun()
 
                 # --- DETECCIÓN DE RESPUESTA A PREGUNTA DE INTERNET ---
@@ -555,6 +646,7 @@ def main():
                                         response = Settings.llm.complete(gen_prompt)
                                         st.markdown(str(response))
                                         st.session_state.messages.append({"role": "assistant", "content": str(response)})
+                                        save_conversation(st.session_state.current_conv_id, st.session_state.messages)
                                         st.session_state.internet_query = None
                                         st.rerun()
                                     except Exception as e: st.error(f"Error en internet: {e}")
@@ -618,15 +710,25 @@ def main():
                                         st.info("Ve a **Sistema (⚙️)** -> **Re-indexar Lite** para activarlo.")
                                         st.stop()
 
+                                # Generar contexto del historial (memoria)
+                                history_str = ""
+                                if len(st.session_state.messages) > 1:
+                                    # Tomamos los últimos 6 mensajes para no saturar la cuota
+                                    last_msgs = st.session_state.messages[-7:-1]
+                                    history_str = "\n".join([f"{m['role'].upper()}: {m['content']}" for m in last_msgs])
+
                                 qa_prompt = PromptTemplate(
-                                    "Eres el Asistente SMR Krayon, experto en Sistemas Microinformáticos y Redes. "
-                                    "Tu misión es ayudar al alumno usando los APUNTES proporcionados.\n\n"
+                                    "Eres el Well, Actually, experto en Sistemas Microinformáticos y Redes. "
+                                    "Tu misión es ayudar al alumno usando los APUNTES proporcionados y recordando la CONVERSACIÓN ACTUAL.\n\n"
+                                    "HISTORIAL DE LA CONVERSACIÓN:\n"
+                                    f"{history_str}\n\n"
                                     "REGLAS:\n"
-                                    "1. Usa el CONTEXTO de abajo para responder.\n"
-                                    "2. Si el usuario pide un 'resumen', analiza todo el contexto y destaca los puntos clave.\n"
-                                    "3. Si realmente no hay nada de información sobre el tema, di: 'NO_DATA'.\n\n"
+                                    "1. Usa el CONTEXTO de los apuntes para temas técnicos.\n"
+                                    "2. Usa el HISTORIAL para responder preguntas sobre la charla (ej: '¿qué te pregunté antes?').\n"
+                                    "3. Si el usuario pregunta algo personal que ya dijo (nombre, etc), responde usando el historial.\n"
+                                    "4. Si realmente no hay información en ningún sitio, di: 'NO_DATA'.\n\n"
                                     "CONTEXTO DE LOS APUNTES:\n{context_str}\n\n"
-                                    "PREGUNTA DEL ALUMNO: {query_str}"
+                                    "PREGUNTA ACTUAL DEL ALUMNO: {query_str}"
                                 )
 
                                 # Aumentamos la calidad ahorrando tokens (top_k=6 con texto limpio)
@@ -650,7 +752,7 @@ def main():
                                 except Exception as ai_err:
                                     err_msg = str(ai_err).upper()
                                     if any(x in err_msg for x in ["503", "429", "RESOURCE_EXHAUSTED", "LIMIT"]):
-                                        answer = "⚠️ **Servidor saturado o cuota agotada.**\n\nHe localizado los documentos relevantes. Échales un vistazo en el visor."
+                                        answer = "⚠️ **La IA está tomando un respiro (Cuota agotada).**\n\nComo acabamos de procesar muchos documentos, Google nos pide esperar unos segundos. Inténtalo de nuevo en un momento o consulta los documentos directamente en el visor."
                                         retriever = idx.as_retriever(similarity_top_k=3, filters=f_filter)
                                         sources_nodes = retriever.retrieve(query)
                                     else:
@@ -665,9 +767,19 @@ def main():
                                 else:
                                     st.markdown(answer)
                                     st.session_state.messages.append({"role": "assistant", "content": answer})
+                                    save_conversation(st.session_state.current_conv_id, st.session_state.messages)
 
                                     if sources_nodes and st.session_state.user_profile.get("auto_view", True):
-                                        if f_filter is not None or (len(query) > 20 and "hola" not in query.lower()):
+                                        # Inteligencia: No abrir archivos si es una pregunta sobre la charla o personal
+                                        chat_keywords = [
+                                            "te pregunté", "te preguntaste", "dije antes", "mi nombre",
+                                            "quien soy", "hola", "gracias", "adios", "chao", "que tal",
+                                            "recordar", "memoria", "conversacion", "chat"
+                                        ]
+                                        is_chat_query = any(kw in query.lower() for kw in chat_keywords)
+
+                                        # Solo auto-visualizar si es una pregunta técnica real (larga o con filtro)
+                                        if not is_chat_query and (f_filter is not None or len(query) > 25):
                                             m = sources_nodes[0].metadata
                                             st.session_state.selected_doc = {"source": m["source"], "metadata": m}
                                             st.rerun()
