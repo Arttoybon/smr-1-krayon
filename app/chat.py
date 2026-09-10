@@ -60,6 +60,9 @@ os.environ["STREAMLIT_BROWSER_GATHER_USAGE_STATS"] = "false"
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 # Workaround para errores de Protobuf en versiones nuevas de Python
 os.environ["PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION"] = "python"
+import warnings
+warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 logging.getLogger("transformers").setLevel(logging.ERROR)
 logging.getLogger("streamlit").setLevel(logging.ERROR)
 
@@ -87,9 +90,9 @@ def load_index() -> VectorStoreIndex:
     # Forzamos la configuración global del SDK para aceptar claves con formato AQ.
     genai.configure(api_key=google_key)
 
-    # Usamos modelos Flash-Latest que tienen mayor cuota gratuita
-    Settings.llm = Gemini(model_name="models/gemini-flash-latest", api_key=google_key)
+    # Usamos el modelo que hemos verificado que está disponible
     Settings.embed_model = GeminiEmbedding(model_name="models/gemini-embedding-001", api_key=google_key)
+    Settings.llm = Gemini(model_name="models/gemini-flash-latest", api_key=google_key)
 
     vector_db_dir = PROJECT_ROOT / "chroma_db"
     if not vector_db_dir.exists():
@@ -118,7 +121,8 @@ def run_indexing(mode="lite"):
     try:
         if mode == "vision": indexar.build_index(progress_callback=status_text.text)
         else: indexar_lite.build_index(progress_callback=status_text.text)
-        st.success("✅ Completado")
+        st.balloons()
+        st.success("✅ ¡Proceso de indexación completado con éxito!")
         st.session_state.index = load_index()
         st.rerun()
     except Exception as e: st.error(f"Error: {e}")
@@ -174,51 +178,47 @@ def main():
         initial_sidebar_state="expanded"
     )
 
-    # --- AUTO-INDEXACIÓN INTELIGENTE (A prueba de F5) ---
-    if "auto_indexed" not in st.session_state:
-        apuntes_dir = PROJECT_ROOT / "apuntes"
-        files_on_disk = [f for f in os.listdir(apuntes_dir) if f.endswith(('.pdf', '.docx')) and not f.startswith("~$")]
+    # --- PREPARACIÓN DE DATOS ---
+    apuntes_dir = PROJECT_ROOT / "apuntes"
+    all_files = []
+    if apuntes_dir.exists():
+        all_files = sorted([f for f in os.listdir(apuntes_dir) if f.endswith(('.pdf', '.docx')) and not f.startswith((".", "~$"))])
 
-        # Función para verificar integridad de la DB
-        def count_indexed_files():
+    # --- AUTO-INDEXACIÓN INTELIGENTE ---
+    if "auto_indexed" not in st.session_state:
+        # Solo comprobar si la DB está lista
+        def is_db_ready():
             try:
                 db_dir = PROJECT_ROOT / "chroma_db"
-                if not db_dir.exists(): return 0
+                if not db_dir.exists(): return False
                 client = chromadb.PersistentClient(path=str(db_dir), settings=chromadb.Settings(anonymized_telemetry=False, is_persistent=True))
                 collection = client.get_collection(name=os.getenv("CHROMA_COLLECTION", "apuntes"))
-                res = collection.get(include=['metadatas'])
-                if not res or not res['metadatas']: return 0
-                return len(set(m['source'].split('/')[-1] for m in res['metadatas'] if m))
-            except: return 0
+                return collection.count() > 0
+            except: return False
 
-        indexed_count = count_indexed_files()
-
-        # Si faltan archivos o la DB está vacía, forzar sincronización
-        if indexed_count < len(files_on_disk):
+        if not is_db_ready():
             status_container = st.empty()
             with status_container.container():
-                st.info(f"🚀 Sincronizando base de conocimientos ({indexed_count}/{len(files_on_disk)} archivos listos)...")
-                progress_bar = st.progress(indexed_count / len(files_on_disk) if len(files_on_disk) > 0 else 0)
+                st.info("🚀 Sincronizando base de conocimientos...")
+                progress_bar = st.progress(0)
                 status_text = st.empty()
 
                 try:
                     def update_status(msg):
-                        try:
-                            if "[" in msg and "/" in msg:
-                                parts = msg.split("[")[1].split("]")[0].split(" ")
-                                ratio = parts[-1] if "/" in parts[-1] else parts[1]
+                        status_text.write(f"**{msg}**")
+                        # Actualizar barra de progreso si es posible
+                        if "[" in msg and "/" in msg:
+                            try:
+                                ratio = msg.split("[")[1].split("]")[0].split(" ")[-1]
                                 curr, tot = map(int, ratio.split("/"))
-                                if "Convirtiendo" in msg: p = (curr / tot) * 0.3
-                                else: p = 0.3 + (curr / tot) * 0.7
-                                progress_bar.progress(min(p, 1.0))
-                        except: pass
-                        status_text.markdown(f"**{msg}**")
+                                progress_bar.progress(curr / tot)
+                            except: pass
 
                     indexar_lite.build_index(progress_callback=update_status)
                     st.session_state.index = load_index()
                     st.session_state.auto_indexed = True
                     status_container.empty()
-                    st.toast("✅ Base de conocimientos actualizada.")
+                    st.toast("✅ Base de conocimientos lista.")
                 except Exception as e:
                     st.error(f"Error en la sincronización: {e}")
         else:

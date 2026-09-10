@@ -1,15 +1,18 @@
+[server]
+headless = true
+port = 8501
+enableCORS = false
+enableXsrfProtection = true
+# ESTO MATA EL BUCLE: Desactiva el reinicio automático al detectar cambios
+runOnSave = false
+fileWatcherType = "none"
+
 [browser]
 gatherUsageStats = false
 
-[server]
-headless = false
-enableCORS = false
-enableXsrfProtection = false
+[runner]
+magicEnabled = false
+fastReruns = false
 
-[theme]
-base = "dark"
-primaryColor = "#007ACC"
-backgroundColor = "#1E1E1E"
-secondaryBackgroundColor = "#252526"
-textColor = "#CCCCCC"
-font = "monospace"
+[development]
+watchWheel = false

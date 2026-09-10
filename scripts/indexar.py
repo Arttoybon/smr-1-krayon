@@ -17,8 +17,12 @@ from dotenv import load_dotenv
 from llama_index.core import Document, Settings, SimpleDirectoryReader, StorageContext, VectorStoreIndex
 from llama_index.embeddings.google import GeminiEmbedding
 from llama_index.llms.gemini import Gemini
-from llama_index.multi_modal_llms.gemini import GeminiMultiModal
-from llama_index.core.schema import ImageDocument
+try:
+    from llama_index.multi_modal_llms.gemini import GeminiMultiModal
+    from llama_index.core.schema import ImageDocument
+except ImportError:
+    GeminiMultiModal = None
+    ImageDocument = None
 from llama_index.vector_stores.chroma import ChromaVectorStore
 
 
@@ -29,6 +33,9 @@ VECTOR_DB_DIR = PROJECT_ROOT / "chroma_db"
 
 def describe_image_with_gemini(mm_model: GeminiMultiModal, image_path: Path, source_name: str) -> str:
     """Utiliza Gemini Vision para describir una imagen o diagrama."""
+    if not mm_model or not ImageDocument:
+        return "Error: Multi-modal dependencies not installed."
+
     prompt = (
         "Eres un experto en Sistemas Microinformáticos y Redes (SMR). "
         "Describe detalladamente este diagrama, esquema o imagen técnica. "
@@ -46,6 +53,9 @@ def describe_image_with_gemini(mm_model: GeminiMultiModal, image_path: Path, sou
 
 def describe_pdf_page_with_gemini(mm_model: GeminiMultiModal, page: pymupdf.Page, source_name: str, page_number: int) -> str:
     """Renderiza una página de PDF y la describe con Gemini Vision."""
+    if not mm_model or not ImageDocument:
+        return "Error: Multi-modal dependencies not installed."
+
     pixmap = page.get_pixmap(matrix=pymupdf.Matrix(2.0, 2.0), alpha=False)
     img_data = pixmap.tobytes("png")
 
@@ -78,6 +88,9 @@ def load_documents(progress_callback=None) -> list[Document]:
     google_key = os.getenv("GOOGLE_API_KEY")
     if not google_key:
         raise RuntimeError("Falta GOOGLE_API_KEY en el archivo .env")
+
+    if GeminiMultiModal is None:
+        raise RuntimeError("La librería 'llama-index-multi-modal-llms-gemini' no está instalada. El modo visión no funcionará.")
 
     mm_model = GeminiMultiModal(model_name="models/gemini-flash-latest", api_key=google_key)
 

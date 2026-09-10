@@ -1,40 +1,40 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-title Lanzador SMR Krayon
+title Lanzador Unico SMR Krayon
 
-:: 1. Verificar Python
-python --version >nul 2>&1
-if %errorlevel% neq 0 (
-    echo [ERROR] Python no esta instalado.
-    if "%1" neq "silent" pause
-    exit /b
-)
+:: Ruta al entorno virtual
+set VENV_PYTHON="%~dp0.venv\Scripts\python.exe"
+set APP_PATH="%~dp0app\chat.py"
 
-:: 2. Crear entorno virtual si no existe
+echo [1/3] Verificando entorno...
 if not exist ".venv" (
-    echo [INFO] Creando entorno virtual...
+    echo [INFO] Creando entorno virtual seguro...
     python -m venv .venv
 )
 
-:: 3. Instalar/Verificar dependencias
-:: Solo hacemos pip install si no existe el marcador de instalacion completa
-if not exist ".venv\installed.tag" (
-    echo [INFO] Instalando dependencias (solo la primera vez)...
-    call .venv\Scripts\activate
-    python -m pip install --upgrade pip
-    pip install -r requirements.txt
-    if %errorlevel% == 0 echo ok > .venv\installed.tag
-)
+echo [2/3] Sincronizando librerias...
+:: Instalamos primero lo basico y pesado que no suele fallar
+%VENV_PYTHON% -m pip install --upgrade pip --quiet
+%VENV_PYTHON% -m pip install streamlit pandas python-dotenv chromadb pymupdf pypdf python-docx fpdf2 requests --quiet
 
-:: 4. Lanzar la aplicacion
-call .venv\Scripts\activate
-start /b python lanzar_asistente.py
+:: Instalamos los de IA. Si fallan por dependencias (Pillow), forzamos sin dependencias
+echo [INFO] Instalando componentes de IA...
+%VENV_PYTHON% -m pip install llama-index-core llama-index-vector-stores-chroma --quiet
+%VENV_PYTHON% -m pip install llama-index-llms-gemini llama-index-embeddings-google --no-deps --quiet
+%VENV_PYTHON% -m pip install google-generativeai markitdown --quiet
 
-:: No pausar si estamos en modo silencioso
-if "%1" neq "silent" (
+:: Intentamos instalar una version de Pillow compatible con Python 3.14 (si existe)
+:: Si falla, el programa podria funcionar igual si no procesa imagenes pesadas localmente
+%VENV_PYTHON% -m pip install "Pillow>=11.0.0" --quiet
+
+echo [3/3] Abriendo Asistente SMR Krayon...
+start "" http://localhost:8501
+%VENV_PYTHON% -m streamlit run %APP_PATH% --server.port=8501 --server.address=0.0.0.0 --server.headless=true --global.developmentMode=false
+
+if %errorlevel% neq 0 (
     echo.
-    echo [OK] Aplicacion lanzada. Puedes cerrar esta ventana.
-    timeout /t 5
+    echo [ERROR] No se pudo iniciar el asistente.
+    pause
 )
 exit /b

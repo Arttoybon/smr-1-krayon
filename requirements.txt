@@ -1,24 +1,21 @@
-# RAG y modelos (Versiones modernas para evitar backtracking)
-llama-index-core>=0.13.0
-llama-index>=0.13.0
-llama-index-llms-openai
-llama-index-embeddings-openai
+# RAG y modelos
+llama-index-core
+llama-index-llms-gemini
 llama-index-embeddings-google
-google-generativeai>=0.8.6
-protobuf>=5.29.6
+llama-index-multi-modal-llms-gemini
 llama-index-vector-stores-chroma
-chromadb==1.5.9
+chromadb
 
 # Ingesta de documentos
-pypdf>=5.0.0
-pymupdf>=1.24.0
-python-docx==1.2.0
-fpdf2==2.8.8
-Pillow==12.3.0
-requests==2.34.2
-# sentence-transformers>=2.6.1  # Comentado para evitar dependencia de PyTorch bloqueada
+pypdf
+pymupdf
+python-docx
+fpdf2
+Pillow
+requests
+markitdown[pdf,docx]
 
 # Interfaz y configuración
-streamlit==1.62.0
-pandas>=2.0.0
-python-dotenv==1.0.1
+streamlit
+pandas
+python-dotenv

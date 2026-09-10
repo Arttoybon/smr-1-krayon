@@ -1,0 +1,15 @@
+services:
+  smr-krayon:
+    build: .
+    container_name: smr_krayon_app
+    ports:
+      - "8501:8501"
+    volumes:
+      # Sincroniza tus apuntes y la base de datos con el contenedor
+      - ./apuntes:/app/apuntes
+      - ./chroma_db:/app/chroma_db
+      - ./apuntes_limpios:/app/apuntes_limpios
+      - ./.env:/app/.env
+    restart: unless-stopped
+    environment:
+      - PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python
