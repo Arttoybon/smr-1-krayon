@@ -3,7 +3,6 @@ headless = true
 port = 8501
 enableCORS = false
 enableXsrfProtection = true
-# ESTO MATA EL BUCLE: Desactiva el reinicio automático al detectar cambios
 runOnSave = false
 fileWatcherType = "none"
 
@@ -16,3 +15,10 @@ fastReruns = false
 
 [development]
 watchWheel = false
+
+[theme]
+primaryColor = "#2f81f7"
+backgroundColor = "#0d1117"
+secondaryBackgroundColor = "#161b22"
+textColor = "#c9d1d9"
+font = "sans serif"

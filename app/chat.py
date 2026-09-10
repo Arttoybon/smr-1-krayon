@@ -153,11 +153,8 @@ def render_doc_viewer(source_path, metadata):
             doc = DocxDocument(full_path)
             txt = [p.text for p in doc.paragraphs if p.text.strip()]
             if txt:
-                # Estilo de hoja de papel para los DOCX
                 st.markdown(f"""
-                    <div style="background-color: white; color: #1e1e1e; padding: 25px; border-radius: 2px;
-                         box-shadow: 0 5px 15px rgba(0,0,0,0.3); font-family: 'Segoe UI', sans-serif;
-                         line-height: 1.6; margin-bottom: 20px; font-size: 14px;">
+                    <div class="docx-paper">
                         {"<br><br>".join(txt)}
                     </div>
                 """, unsafe_allow_html=True)
@@ -228,95 +225,143 @@ def main():
     # --- ESTILOS VS CODE PRO (NIVELACIÓN Y DISEÑO) ---
     st.markdown("""
         <style>
-        /* Variables Pro */
-        :root { --bg-main: #1E1E1E; --bg-side: #252526; --accent: #007ACC; --border: #333333; }
-
-        /* Ocultar footer y menú, pero dejar el header visible y resaltar el botón lateral */
-        footer, #MainMenu {visibility: hidden;}
-        header[data-testid="stHeader"] {
-            background: transparent !important;
-            z-index: 1001 !important;
+        /* Variables Modernas */
+        :root {
+            --bg-dark: #0d1117;
+            --bg-sidebar: #010409;
+            --bg-card: #161b22;
+            --bg-hover: #21262d;
+            --accent: #2f81f7;
+            --text-main: #c9d1d9;
+            --text-dim: #8b949e;
+            --border: #30363d;
         }
 
-        /* Hacer el botón de abrir/cerrar sidebar MUY visible */
-        [data-testid="stSidebarCollapseButton"] {
+        /* Aplicación Global */
+        .stApp { background-color: var(--bg-dark); color: var(--text-main); font-family: 'Segoe UI', sans-serif; }
+
+        /* Sidebar Estilo VS Code */
+        [data-testid="stSidebar"] {
+            background-color: var(--bg-sidebar) !important;
+            border-right: 1px solid var(--border) !important;
+        }
+
+        /* ARREGLO DE BOTONES SIDEBAR (Adiós bloques blancos y cortes) */
+        [data-testid="stSidebar"] .stButton button {
+            background-color: transparent !important;
+            color: var(--text-dim) !important;
+            border: 1px solid transparent !important;
+            border-radius: 6px !important;
+            width: 100% !important;
+            text-align: left !important;
+            padding: 10px 8px !important; /* Reducido padding lateral */
+            font-size: 16px !important; /* Un poco más grandes para que no se corten los emojis */
+            transition: all 0.2s ease !important;
+            margin-bottom: 4px !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important; /* Centrar contenido del botón */
+        }
+
+        /* Ajuste específico para los botones con texto (en la columna de la derecha) */
+        [data-testid="stSidebar"] [data-testid="column"]:nth-child(2) .stButton button {
+            justify-content: flex-start !important;
+            font-size: 14px !important;
+        }
+        [data-testid="stSidebar"] .stButton button:hover {
+            background-color: var(--bg-hover) !important;
+            color: var(--text-main) !important;
+            border-color: var(--border) !important;
+        }
+
+        /* Botón de Salida */
+        button[key="b_exit"] {
+            color: #f85149 !important;
+        }
+
+        /* === ELIMINACIÓN DE COLORES ROJOS Y GRISES === */
+
+        /* Asegurar que las menciones se vean bien con el nuevo tema */
+        div[data-baseweb="tag"] {
             background-color: var(--accent) !important;
             color: white !important;
-            border-radius: 5px !important;
-            padding: 5px !important;
-            margin-top: 5px !important;
-            box-shadow: 0 0 15px rgba(0,122,204,0.6) !important;
         }
 
-        .stApp { background-color: var(--bg-main); color: #cccccc; font-family: 'Segoe UI', sans-serif; }
+        /* Chat Input - BLANCO PURO PARA EL TEXTO Y ELIMINAR ROJO */
+        [data-testid="stChatInput"] {
+            border: 1px solid var(--border) !important;
+            background-color: var(--bg-card) !important;
+        }
+        [data-testid="stChatInput"] textarea {
+            color: #ffffff !important;
+            -webkit-text-fill-color: #ffffff !important;
+            background-color: transparent !important;
+        }
+        [data-testid="stChatInput"]:focus-within {
+            border-color: var(--accent) !important;
+            box-shadow: 0 0 0 1px var(--accent) !important;
+        }
 
+        /* Botón de enviar (Icono) - AZUL */
+        [data-testid="stChatInputButton"] svg {
+            fill: var(--accent) !important;
+        }
+
+        /* Contenedores y Layout */
         [data-testid="stAppViewContainer"] { height: 100vh; overflow: hidden; }
         .main .block-container {
             padding: 0 !important;
             max-width: 100% !important;
-            height: 100vh !important;
             margin-top: 35px !important;
         }
 
-        [data-testid="stHorizontalBlock"] { gap: 0 !important; }
-
-        /* Visor (Panel 1) */
-        [data-testid="stHorizontalBlock"] > [data-testid="column"]:nth-child(1) {
+        /* Paneles */
+        [data-testid="column"]:nth-child(1) {
             height: calc(100vh - 57px);
             overflow-y: auto;
-            padding: 20px 30px !important;
             border-right: 1px solid var(--border);
+            padding: 30px !important;
         }
-
-        /* Chat (Panel 2) */
-        [data-testid="stHorizontalBlock"] > [data-testid="column"]:nth-child(2) {
+        [data-testid="column"]:nth-child(2) {
             height: calc(100vh - 57px);
+            background-color: #0d1117;
             padding: 0 !important;
-            background-color: #1a1a1a;
-            display: flex;
-            flex-direction: column;
         }
 
-        /* Nivelar Widgets */
-        h4, .stMultiSelect { margin-top: 0 !important; padding-top: 0 !important; }
-
-        /* Contenedor fijo para el input y menciones en la parte inferior */
-        .bottom-command-bar {
-            position: fixed;
-            bottom: 30px;
-            right: 20px;
-            width: 30%;
-            z-index: 1001;
-            background-color: #1a1a1a;
-            border: 1px solid #333;
+        /* Visor de Documentos (Papel Limpio) */
+        .docx-paper {
+            background-color: #ffffff;
+            color: #1f2328;
+            padding: 60px !important;
             border-radius: 4px;
-            padding: 10px;
-            box-shadow: 0 -5px 15px rgba(0,0,0,0.3);
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+            font-family: 'Segoe UI', sans-serif;
+            line-height: 1.6;
+            max-width: 800px;
+            margin: 0 auto;
         }
 
-        /* Ajustar el tamaño de los avatares en el chat - MÁS GRANDES */
-        [data-testid="stChatMessageAvatar"] {
-            width: 65px !important;
-            height: 65px !important;
-            border-radius: 12px !important;
-        }
-        [data-testid="stChatMessageAvatar"] img, [data-testid="stChatMessageAvatar"] div {
-            width: 65px !important;
-            height: 65px !important;
-            object-fit: cover !important;
-            font-size: 35px !important; /* Para cuando es un emoji */
-            display: flex !important;
-            align-items: center !important;
-            justify-content: center !important;
-        }
+        /* Header y Status Bar */
+        footer, #MainMenu {visibility: hidden;}
+        header[data-testid="stHeader"] { background: transparent !important; }
 
-        .stChatInputContainer { width: 100% !important; position: static !important; padding: 0 !important; }
-
-        .editor-header { position: fixed; top: 0; left: 0; right: 0; height: 35px; background: var(--bg-side); z-index: 1000; display: flex; align-items: center; padding-left: 60px; border-bottom: 1px solid var(--border); }
-        .status-bar { position: fixed; bottom: 0; left: 0; right: 0; height: 22px; background: var(--accent); z-index: 1000; color: white; font-size: 11px; display: flex; align-items: center; padding: 0 10px; }
+        .editor-header {
+            position: fixed; top: 0; left: 0; right: 0; height: 35px;
+            background: var(--bg-sidebar); z-index: 1000; display: flex;
+            align-items: center; padding-left: 60px; border-bottom: 1px solid var(--border);
+            color: var(--text-dim); font-size: 12px;
+        }
+        .status-bar {
+            position: fixed; bottom: 0; left: 0; right: 0; height: 22px;
+            background: var(--bg-sidebar); z-index: 1000; color: var(--text-dim);
+            font-size: 11px; display: flex; align-items: center; padding: 0 10px;
+            border-top: 1px solid var(--border);
+        }
         </style>
-        <div class="editor-header"><div style="background:#1E1E1E; padding:0 20px; height:100%; display:flex; align-items:center; border-top:1px solid #007ACC; color:white; font-size:12px;">🤖 krayon_workspace</div></div>
-        <div class="status-bar"><span>● Connected</span><span style="margin-left:auto;">Gemini 1.5 Flash | v2.12 Pro</span></div>
+        <div class="editor-header">
+            <span style="color:var(--accent)">●</span> krayon_workspace / <b>SMR_Krayon_Pro</b>
+        </div>
+        <div class="status-bar"><span>● Connected</span><span style="margin-left:auto;">Gemini 1.5 Flash | v3.1</span></div>
     """, unsafe_allow_html=True)
 
     if "selected_doc" not in st.session_state: st.session_state.selected_doc = None
@@ -356,15 +401,13 @@ def main():
     # --- SIDEBAR ---
     with st.sidebar:
         st.markdown("<br>", unsafe_allow_html=True)
-        col_i, col_c = st.columns([1, 4])
+        col_i, col_c = st.columns([1.2, 3.8])
         with col_i:
-            if st.button("📄", key="b1", help="Explorador"): st.session_state.active_tab = "explorer"
+            if st.button("📁", key="b1", help="Explorador"): st.session_state.active_tab = "explorer"
             if st.button("⚙️", key="b2", help="Sistema"): st.session_state.active_tab = "system"
-            if st.button("👤", key="b3", help="Mi Perfil"): st.session_state.active_tab = "profile"
+            if st.button("👤", key="b3", help="Perfil"): st.session_state.active_tab = "profile"
             st.markdown("<br><br>", unsafe_allow_html=True)
-            if st.button("🔴", key="b_exit", help="Cerrar Aplicación"):
-                st.toast("Deteniendo servicios... Adiós 👋")
-                time.sleep(1)
+            if st.button("❌", key="b_exit", help="Salir"):
                 os._exit(0)
         with col_c:
             if st.session_state.active_tab == "explorer":
@@ -491,6 +534,13 @@ def main():
 
             if query:
                 st.session_state.messages.append({"role": "user", "content": query})
+
+                # --- RESPUESTA RÁPIDA A SALUDOS (Ahorro de cuota) ---
+                saludos = ["hola", "buenas", "buenos dias", "buenas tardes", "hola!", "hola?", "ey", "hi", "hello"]
+                if query.lower().strip().strip("!").strip("?") in saludos:
+                    res_hola = "¡Hola! 👋 Soy tu Asistente SMR Krayon. Estoy listo para ayudarte con tus apuntes. ¿Qué quieres repasar hoy?"
+                    st.session_state.messages.append({"role": "assistant", "content": res_hola})
+                    st.rerun()
 
                 # --- DETECCIÓN DE RESPUESTA A PREGUNTA DE INTERNET ---
                 if "internet_query" in st.session_state and st.session_state.internet_query:
